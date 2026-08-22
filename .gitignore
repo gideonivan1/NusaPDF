@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+.next/
+out/
+build/
+dist/
+
+# Environment — NEVER commit these. .env.local holds the Supabase service role
+# key, which bypasses row-level security entirely.
+.env
+.env.local
+.env*.local
+.env.production
+
+# pdf.js worker is copied from node_modules by scripts/copy-pdf-worker.mjs
+public/pdf.worker.min.mjs
+
+# Logs & debug
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Supabase CLI local state
+supabase/.branches
+supabase/.temp

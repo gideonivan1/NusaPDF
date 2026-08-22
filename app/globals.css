@@ -1,0 +1,291 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   NusaPDF — Mastercard-inspired design tokens
+   Ref: PRD §6 "Design Direction". Every value here is load-bearing; the
+   system's identity comes from the extreme radius scale, the warm cream
+   canvas, and the half-step 450 body weight. Do not "round off" these values.
+   ========================================================================== */
+
+@theme {
+  /* ---- Surfaces --------------------------------------------------------- */
+  --color-canvas: #f3f0ee; /* page background — never pure white */
+  --color-lifted: #fcfbfa; /* nested "paper on paper" sections */
+  --color-bone: #f4f4f4; /* cool-gray alternate surface */
+  --color-ghost: #e8e2da; /* cream-on-cream watermark headlines */
+
+  /* ---- Ink & text ------------------------------------------------------- */
+  --color-ink: #141413; /* primary text, CTAs, footer. Warm near-black */
+  --color-charcoal: #262627;
+  --color-slate: #696969; /* muted text — only at >=16px (4.6:1 on canvas) */
+  --color-granite: #555555;
+  --color-dust: #d1cdc7; /* DECORATIVE ONLY — fails AA for text */
+
+  /* ---- Accents ---------------------------------------------------------- */
+  --color-signal: #cf4500; /* consent/legal ONLY — never a marketing CTA */
+  --color-signal-light: #f37338; /* orbital arcs, active indicators */
+  --color-clay: #9a3a0a;
+  --color-linkblue: #3860be;
+
+  /* ---- Brand mark (logo only, never UI) --------------------------------- */
+  --color-mc-red: #eb001b;
+  --color-mc-yellow: #f79e1b;
+
+  /* ---- Radius scale ----------------------------------------------------- */
+  /* Deliberately skips 8-16px. Only micro, medium-large, or full-pill.      */
+  --radius-micro: 6px;
+  --radius-btn: 20px; /* the signature button radius */
+  --radius-consent: 24px;
+  --radius-stadium: 40px; /* hero frames, dropzones, large containers */
+  --radius-pill: 999px;
+
+  /* ---- Elevation -------------------------------------------------------- */
+  /* Atmospheric cushioning, not directional light: wide spread, low alpha.  */
+  --shadow-nav: 0 4px 24px 0 rgb(0 0 0 / 0.04);
+  --shadow-card: 0 24px 48px 0 rgb(0 0 0 / 0.08);
+  --shadow-drama: 0 70px 110px 0 rgb(0 0 0 / 0.25);
+
+  /* ---- Typography ------------------------------------------------------- */
+  --font-sans: var(--font-sofia), 'Sofia Sans', Arial, sans-serif;
+
+  --text-hero: 64px;
+  --text-hero--line-height: 1; /* 1:1 — the tight editorial hero rhythm */
+  --text-hero--letter-spacing: -0.02em;
+
+  --text-section: 36px;
+  --text-section--line-height: 44px;
+  --text-section--letter-spacing: -0.02em;
+
+  --text-cardtitle: 24px;
+  --text-cardtitle--line-height: 1.2;
+  --text-cardtitle--letter-spacing: -0.02em;
+
+  --text-eyebrow: 14px;
+  --text-eyebrow--line-height: 1;
+  --text-eyebrow--letter-spacing: 0.04em;
+
+  --text-copy: 16px;
+  --text-copy--line-height: 1.4;
+
+  /* ---- Motion ----------------------------------------------------------- */
+  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-copy);
+    line-height: 1.4;
+    /* The half-step weight is MarkForMC's signature. Sofia Sans is variable,
+       so 450 renders as a true intermediate weight rather than snapping. */
+    font-weight: 450;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  /* Visible, high-contrast focus ring — WCAG 2.2 AA (PRD §13 US9). */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 3px;
+    border-radius: var(--radius-micro);
+  }
+
+  ::selection {
+    background-color: var(--color-signal-light);
+    color: #fff;
+  }
+
+  /* Scrollbars tinted to the warm palette so they don't read as system chrome */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-dust) transparent;
+  }
+}
+
+/* ==========================================================================
+   Utilities
+   ========================================================================== */
+
+@utility container-page {
+  width: 100%;
+  max-width: 1280px;
+  margin-inline: auto;
+  padding-inline: 24px;
+
+  @media (width >= 768px) {
+    padding-inline: 48px;
+  }
+}
+
+/* Long-form editorial copy. A hand-rolled scale rather than the typography
+   plugin, so the design system's own tracking and 450 weight stay intact. */
+@utility prose-nusa {
+  color: var(--color-granite);
+  font-size: 17px;
+  line-height: 1.6;
+
+  & h2 {
+    margin-block: 3rem 1rem;
+    color: var(--color-ink);
+    font-size: 28px;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+
+  & h3 {
+    margin-block: 2.25rem 0.75rem;
+    color: var(--color-ink);
+    font-size: 19px;
+    line-height: 1.3;
+  }
+
+  & p {
+    margin-block: 1rem;
+  }
+
+  & ul,
+  & ol {
+    margin-block: 1rem;
+    padding-inline-start: 1.5rem;
+  }
+
+  & ul {
+    list-style: disc;
+  }
+
+  & ol {
+    list-style: decimal;
+  }
+
+  & li {
+    margin-block: 0.5rem;
+    padding-inline-start: 0.25rem;
+  }
+
+  & li::marker {
+    color: var(--color-dust);
+  }
+
+  & strong {
+    color: var(--color-ink);
+    font-weight: 500;
+  }
+
+  & a {
+    color: var(--color-clay);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+
+  & a:hover {
+    color: var(--color-signal);
+  }
+
+  & code {
+    border-radius: var(--radius-micro);
+    background-color: var(--color-lifted);
+    padding: 0.1em 0.4em;
+    font-size: 0.9em;
+  }
+
+  & table {
+    width: 100%;
+    margin-block: 1.5rem;
+    border-collapse: collapse;
+    font-size: 15px;
+  }
+
+  & th {
+    border-bottom: 1px solid var(--color-dust);
+    padding: 0.75rem 1rem 0.75rem 0;
+    color: var(--color-ink);
+    font-weight: 500;
+    text-align: left;
+  }
+
+  & td {
+    border-bottom: 1px solid color-mix(in srgb, var(--color-dust) 55%, transparent);
+    padding: 0.75rem 1rem 0.75rem 0;
+    vertical-align: top;
+  }
+
+  & :is(h2, h3) + p {
+    margin-top: 0;
+  }
+}
+
+/* Screen-reader-only, but focusable (used by the skip link). */
+@utility sr-only-focusable {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+
+  &:focus {
+    position: fixed;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+}
+
+/* ==========================================================================
+   Motion preferences — PRD §6 requires orbital/card animation to stop.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .orbital-draw {
+    stroke-dashoffset: 0 !important;
+  }
+}
+
+/* Orbital arc draw-in — decorative, disabled above under reduced motion. */
+@keyframes orbital-draw {
+  from {
+    stroke-dashoffset: var(--orbital-length, 1200);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.orbital-draw {
+  stroke-dasharray: var(--orbital-length, 1200);
+  animation: orbital-draw 1.8s var(--ease-soft) forwards;
+}

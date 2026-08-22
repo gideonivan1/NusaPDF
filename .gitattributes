@@ -1,0 +1,15 @@
+# Normalise line endings in the repository to LF.
+#
+# Development happens on Windows while Vercel builds on Linux; without this the
+# first checkout on either side rewrites every file and buries real changes in
+# whitespace-only diffs.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
