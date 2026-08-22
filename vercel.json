@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+
+  "regions": ["sin1"],
+
+  "crons": [
+    {
+      "path": "/api/cron/purge",
+      "schedule": "0 19 * * *"
+    }
+  ]
+}

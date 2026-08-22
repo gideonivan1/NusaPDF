@@ -83,6 +83,17 @@ Yang penting: **hanya galat kuota** yang memicu failover. Permintaan yang salah 
 
 Status kolam bersifat per-instance dan disimpan di memori; pada platform serverless tiap instance belajar sendiri kunci mana yang habis. Biayanya satu permintaan sia-sia per instance per kunci — jauh lebih murah daripada membaca penyimpanan bersama pada setiap panggilan.
 
+### Deployment
+
+`vercel.json` mengunci dua hal:
+
+- **`regions: ["sin1"]`** — fungsi berjalan di Singapura, sekitar 5–15 ms dari Supabase. Region default Vercel ada di Amerika, dan setiap panggilan database akan menyeberangi Pasifik (~200–250 ms). Route ingest melakukan belasan round trip plus mengunduh berkas hingga 50 MB dari storage, jadi region yang salah langsung memakan anggaran 60 detik.
+- **Cron `/api/cron/purge`** pukul 02:00 WIB (`0 19 * * *`, jadwal cron Vercel memakai UTC) — menghapus dokumen AI PDF yang lewat masa simpan.
+
+Endpoint purge dilindungi `CRON_SECRET`; tanpa nilai itu ia menonaktifkan diri (503) alih-alih terbuka, karena endpoint hapus-massal tanpa autentikasi adalah masalah yang jauh lebih besar daripada cron yang tidak jalan.
+
+> **Catatan retensi:** paket Hobby membatasi cron **sekali sehari**, sehingga jarak terburuk antara kedaluwarsa dan penghapusan bisa mencapai ~48 jam. Bila Anda ingin klaim "24 jam" berlaku ketat, sapuan perlu dijalankan setiap jam — lewat paket Pro, atau `pg_cron` + `pg_net` di Supabase yang memanggil endpoint yang sama.
+
 ### Auth
 
 Supabase `signInAnonymously()` memberi setiap pengunjung `auth.uid()` sungguhan sejak kunjungan pertama. Akibatnya seluruh kebijakan RLS cukup berupa pemeriksaan kepemilikan sederhana — tidak ada jalur "tamu" terpisah — dan `linkIdentity()` mempertahankan uid yang sama sehingga riwayat percakapan ikut terbawa saat pengguna mendaftar.

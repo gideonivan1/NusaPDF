@@ -17,7 +17,8 @@
     "doctor:ai": "node --import ./scripts/register-ts.mjs --conditions=react-server --experimental-strip-types scripts/doctor-ai.mjs",
     "repro:upload": "node scripts/repro-upload.mjs",
     "icons": "node scripts/make-icons.mjs",
-    "measure:ingest": "node --import ./scripts/register-ts.mjs --conditions=react-server --experimental-strip-types scripts/measure-ingest.mjs"
+    "measure:ingest": "node --import ./scripts/register-ts.mjs --conditions=react-server --experimental-strip-types scripts/measure-ingest.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",
