@@ -83,6 +83,21 @@ Yang penting: **hanya galat kuota** yang memicu failover. Permintaan yang salah 
 
 Status kolam bersifat per-instance dan disimpan di memori; pada platform serverless tiap instance belajar sendiri kunci mana yang habis. Biayanya satu permintaan sia-sia per instance per kunci — jauh lebih murah daripada membaca penyimpanan bersama pada setiap panggilan.
 
+### Variabel di Vercel
+
+Enam variabel harus diisi di dashboard Vercel sebelum deploy pertama. Nilainya tidak pernah ikut ter-commit — yang ada di repo hanya `.env.example`.
+
+| Variabel | Sensitive | Catatan |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | tidak perlu | Disisipkan ke bundle peramban saat build |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | tidak perlu | Sama — yang menjaga data adalah RLS, bukan kerahasiaan kunci ini |
+| `SUPABASE_SERVICE_ROLE_KEY` | **ya** | Melewati seluruh RLS |
+| `GEMINI_API_KEY` | **ya** | Minimal satu; `_2`–`_4` opsional untuk failover |
+| `GEMINI_MODEL_FAST` | tidak perlu | Opsional; kosong = `gemini-3.7-flash` |
+| `CRON_SECRET` | **ya** | Tanpa ini `/api/cron/purge` menonaktifkan diri dan retensi tidak ditegakkan |
+
+Variabel `NEXT_PUBLIC_*` dibaca **saat build**, bukan saat runtime — menambahkannya ke deployment yang sudah jadi tidak berpengaruh sampai ada build ulang.
+
 ### Deployment
 
 `vercel.json` mengunci dua hal:
