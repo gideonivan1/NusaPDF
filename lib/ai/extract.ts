@@ -1,4 +1,5 @@
 import 'server-only';
+import { installPdfDomGlobals } from './dom-polyfill';
 
 /**
  * Server-side PDF text extraction and chunking for the RAG index.
@@ -28,7 +29,13 @@ const MIN_CHUNK = 80;
 let pdfjsPromise: Promise<typeof import('pdfjs-dist/legacy/build/pdf.mjs')> | null = null;
 
 function loadPdfjs() {
-  pdfjsPromise ??= import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjsPromise ??= (async () => {
+    // Must run before the import: pdf.mjs constructs a DOMMatrix at module
+    // scope, and on Vercel the package it normally borrows that class from is
+    // not traced into the function bundle. See lib/ai/dom-polyfill.ts.
+    installPdfDomGlobals();
+    return import('pdfjs-dist/legacy/build/pdf.mjs');
+  })();
   return pdfjsPromise;
 }
 

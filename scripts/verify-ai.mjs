@@ -48,9 +48,20 @@ let realKey = null;
 try {
   const { readFileSync } = await import('node:fs');
   const env = readFileSync(new URL('../.env.local', import.meta.url), 'utf8');
-  const match = env.match(/^\s*GEMINI_API_KEY\s*=\s*(.+)$/m);
-  const value = match?.[1]?.trim().replace(/^["']|["']$/g, '');
-  if (value && value !== 'undefined') realKey = value;
+
+  // Every Gemini key is copied into process.env, not just captured — the pool
+  // reads the environment, so recording the value without setting it leaves it
+  // with nothing to use.
+  for (const line of env.split(/\r?\n/)) {
+    const match = line.match(/^[ \t]*(GEMINI_API_KEY(?:_[234])?)[ \t]*=[ \t]*([^\r\n]+)[ \t]*$/);
+    if (!match) continue;
+
+    const value = match[2].trim().replace(/^["']|["']$/g, '');
+    if (!value || value === 'undefined' || value === 'null') continue;
+
+    process.env[match[1]] = value;
+    realKey ??= value;
+  }
 } catch {
   // No .env.local — the ordering check is skipped below.
 }
@@ -91,6 +102,45 @@ console.log('extractPageTexts');
     'teks halaman tidak bocor ke halaman lain',
     !pages[0].text.includes('Kapasitas') && !pages[1].text.includes('Anggaran'),
   );
+}
+
+/* ================================================== polyfill DOM untuk pdf.js */
+console.log('\ndom-polyfill');
+{
+  const { installPdfDomGlobals } = await import('../lib/ai/dom-polyfill.ts');
+
+  // On this machine @napi-rs/canvas is present, so pdf.js would supply
+  // DOMMatrix anyway and a regression here would go unnoticed. Testing the
+  // class directly is what keeps the production-only path covered — this bug
+  // appeared *only* on Vercel the first time.
+  installPdfDomGlobals();
+  checkThat('DOMMatrix tersedia setelah dipasang', typeof globalThis.DOMMatrix === 'function');
+  checkThat('Path2D tersedia setelah dipasang', typeof globalThis.Path2D === 'function');
+
+  const M = globalThis.DOMMatrix;
+
+  checkThat('matriks baru adalah identitas', new M().isIdentity);
+
+  const translated = new M().translate(10, 20);
+  check('translate menggeser e dan f', [translated.e, translated.f], [10, 20]);
+
+  const scaled = new M().scale(2, 3);
+  check('scale mengubah a dan d', [scaled.a, scaled.d], [2, 3]);
+
+  // Inverting a translation must negate it — the most common way to get the
+  // multiply order wrong shows up right here.
+  const inverted = new M().translate(10, 20).invertSelf();
+  check('invers dari translasi menegasikannya', [inverted.e, inverted.f], [-10, -20]);
+
+  const invScaled = new M().scale(2, 4).invertSelf();
+  check('invers dari skala membalikkannya', [invScaled.a, invScaled.d], [0.5, 0.25]);
+
+  const point = new M().translate(5, 7).scale(2, 2).transformPoint({ x: 3, y: 4 });
+  check('transformPoint memakai skala lalu translasi', [point.x, point.y], [11, 15]);
+
+  const singular = new M();
+  singular.a = 0; singular.b = 0; singular.c = 0; singular.d = 0;
+  checkThat('matriks singular menghasilkan NaN, bukan melempar', Number.isNaN(singular.invertSelf().a));
 }
 
 console.log('\nchunkPages');
@@ -146,44 +196,55 @@ console.log('\nembedDocuments — urutan hasil');
 if (!realKey) {
   console.log('  LEWAT  tidak ada GEMINI_API_KEY di .env.local');
 } else {
-  process.env.GEMINI_API_KEY = realKey;
-  delete process.env.GEMINI_API_KEY_2;
-  delete process.env.GEMINI_API_KEY_3;
-  delete process.env.GEMINI_API_KEY_4;
+  // Every configured key stays in play: restricting to one removed the pool's
+  // headroom and made this check fail on Gemini's per-minute rate limit rather
+  // than on anything about the code.
   resetPool();
 
   const { embedDocuments, BATCH_SIZE } = await import('../lib/ai/embed.ts');
 
-  // Deliberately spans several batches, since batches now run concurrently and
-  // a race would only show up across batch boundaries.
-  const count = BATCH_SIZE * 2 + 5;
+  // Just past one batch — enough to cross a batch boundary, which is the only
+  // place a concurrency race could reorder anything, without spending quota on
+  // a third round trip.
+  const count = BATCH_SIZE + 6;
   const texts = Array.from({ length: count }, (_, i) => `Potongan nomor ${i} tentang topik ${i}.`);
 
-  const vectors = await embedDocuments(texts);
+  try {
+    const vectors = await embedDocuments(texts);
 
-  check('mengembalikan satu vektor per teks', vectors.length, count);
-  checkThat('setiap vektor berdimensi 768', vectors.every((v) => v.length === 768));
+    check('mengembalikan satu vektor per teks', vectors.length, count);
+    checkThat('setiap vektor berdimensi 768', vectors.every((v) => v.length === 768));
 
-  // Re-embedding one text alone must reproduce the vector at that same index.
-  // If concurrency reordered results, this is where it would surface — and the
-  // consequence would be every citation pointing at the wrong page.
-  const probeIndex = BATCH_SIZE + 3;
-  const [alone] = await embedDocuments([texts[probeIndex]]);
+    // Re-embedding one text alone must reproduce the vector at that same index.
+    // If concurrency reordered results, this is where it would surface — and
+    // the consequence would be every citation pointing at the wrong page.
+    const probeIndex = BATCH_SIZE + 2;
+    const [alone] = await embedDocuments([texts[probeIndex]]);
 
-  const dot = alone.reduce((sum, value, i) => sum + value * vectors[probeIndex][i], 0);
-  checkThat(
-    'vektor tetap sejajar dengan teksnya lintas batch',
-    dot > 0.99,
-    `kemiripan pada indeks ${probeIndex}: ${dot.toFixed(4)}`,
-  );
+    const dot = alone.reduce((sum, value, i) => sum + value * vectors[probeIndex][i], 0);
+    checkThat(
+      'vektor tetap sejajar dengan teksnya lintas batch',
+      dot > 0.99,
+      `kemiripan pada indeks ${probeIndex}: ${dot.toFixed(4)}`,
+    );
 
-  // And it must NOT match a neighbour, or the check above would pass trivially.
-  const neighbour = alone.reduce((sum, value, i) => sum + value * vectors[probeIndex + 1][i], 0);
-  checkThat(
-    'vektor tetangga memang berbeda',
-    neighbour < 0.99,
-    `kemiripan tetangga: ${neighbour.toFixed(4)}`,
-  );
+    // And it must NOT match a neighbour, or the check above would pass trivially.
+    const neighbour = alone.reduce((sum, value, i) => sum + value * vectors[probeIndex + 1][i], 0);
+    checkThat(
+      'vektor tetangga memang berbeda',
+      neighbour < 0.99,
+      `kemiripan tetangga: ${neighbour.toFixed(4)}`,
+    );
+  } catch (error) {
+    // A spent quota says nothing about the code. Failing the whole suite on it
+    // would train everyone to ignore a red result, which is worse than an
+    // honest skip.
+    if (error instanceof AllKeysExhaustedError || isQuotaError(error)) {
+      console.log(`  LEWAT  kuota/rate limit Gemini sedang habis (${error.message.slice(0, 60)})`);
+    } else {
+      throw error;
+    }
+  }
 }
 
 console.log('\nisQuotaError');
