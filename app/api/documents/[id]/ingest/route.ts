@@ -7,9 +7,23 @@ import { embedDocuments } from '@/lib/ai/embed';
 import { AllKeysExhaustedError } from '@/lib/ai/key-pool';
 import { refundQuota } from '@/lib/ai/quota';
 
-/** Indexing a long PDF is the slowest operation in the app. */
 export const runtime = 'nodejs';
-export const maxDuration = 300;
+
+/**
+ * 60s is Vercel's ceiling on the Hobby plan; 300 would silently be capped there
+ * and the function killed mid-write, leaving the document stuck in `processing`.
+ * The limits in AI_LIMITS are sized to finish well inside this, and the budget
+ * check below aborts cleanly if a document still runs long.
+ */
+export const maxDuration = 60;
+
+/** Signals that indexing ran past its wall-clock budget. */
+class IngestBudgetExceeded extends Error {
+  constructor() {
+    super('Ingest budget exceeded');
+    this.name = 'IngestBudgetExceeded';
+  }
+}
 
 /**
  * Separates "this document is broken" from "this server is broken".
@@ -121,11 +135,33 @@ export async function POST(
   // yields nothing extractable.
   if (chunks.length === 0) return fail('E_SCANNED_NO_TEXT', 422);
 
+  // Rejected before any embedding call, so an oversized document costs the user
+  // nothing and gets an explanation rather than a timeout.
+  if (chunks.length > AI_LIMITS.maxChunks) {
+    return fail(
+      'E_TOO_COMPLEX',
+      422,
+      `${chunks.length} potongan teks, melebihi batas ${AI_LIMITS.maxChunks}`,
+    );
+  }
+
   /* ------------------------------------------------------------- embedding */
   let embeddings: number[][];
+  const embedStartedAt = Date.now();
+
   try {
-    embeddings = await embedDocuments(chunks.map((chunk) => chunk.content));
+    embeddings = await embedDocuments(chunks.map((chunk) => chunk.content), () => {
+      // Checked between batches. Throwing here unwinds through `fail()` below,
+      // which marks the document failed and refunds the quota — far better than
+      // the platform killing the function with the row left mid-flight.
+      if (Date.now() - embedStartedAt > AI_LIMITS.embedBudgetMs) {
+        throw new IngestBudgetExceeded();
+      }
+    });
   } catch (error) {
+    if (error instanceof IngestBudgetExceeded) {
+      return fail('E_TOO_COMPLEX', 422, 'Pengindeksan melebihi anggaran waktu');
+    }
     if (error instanceof AllKeysExhaustedError) {
       return fail('E_QUOTA', 429, 'Seluruh kunci Gemini sedang mencapai batas');
     }

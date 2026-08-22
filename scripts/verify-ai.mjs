@@ -39,6 +39,22 @@ function checkThat(label, condition, detail = '') {
   }
 }
 
+/**
+ * Real credentials, captured before the failover tests below overwrite
+ * process.env with fakes. Only used for the ordering check, which is skipped
+ * when no key is configured so `npm run verify` still works on a fresh clone.
+ */
+let realKey = null;
+try {
+  const { readFileSync } = await import('node:fs');
+  const env = readFileSync(new URL('../.env.local', import.meta.url), 'utf8');
+  const match = env.match(/^\s*GEMINI_API_KEY\s*=\s*(.+)$/m);
+  const value = match?.[1]?.trim().replace(/^["']|["']$/g, '');
+  if (value && value !== 'undefined') realKey = value;
+} catch {
+  // No .env.local — the ordering check is skipped below.
+}
+
 console.log('\nNusaPDF — verifikasi pipeline AI\n');
 
 /* ==================================================== extraction & chunking */
@@ -124,6 +140,52 @@ console.log('\nchunkPages');
 }
 
 /* ============================================================== key pool == */
+/* ============================================ urutan embedding (perlu kunci) */
+console.log('\nembedDocuments — urutan hasil');
+
+if (!realKey) {
+  console.log('  LEWAT  tidak ada GEMINI_API_KEY di .env.local');
+} else {
+  process.env.GEMINI_API_KEY = realKey;
+  delete process.env.GEMINI_API_KEY_2;
+  delete process.env.GEMINI_API_KEY_3;
+  delete process.env.GEMINI_API_KEY_4;
+  resetPool();
+
+  const { embedDocuments, BATCH_SIZE } = await import('../lib/ai/embed.ts');
+
+  // Deliberately spans several batches, since batches now run concurrently and
+  // a race would only show up across batch boundaries.
+  const count = BATCH_SIZE * 2 + 5;
+  const texts = Array.from({ length: count }, (_, i) => `Potongan nomor ${i} tentang topik ${i}.`);
+
+  const vectors = await embedDocuments(texts);
+
+  check('mengembalikan satu vektor per teks', vectors.length, count);
+  checkThat('setiap vektor berdimensi 768', vectors.every((v) => v.length === 768));
+
+  // Re-embedding one text alone must reproduce the vector at that same index.
+  // If concurrency reordered results, this is where it would surface — and the
+  // consequence would be every citation pointing at the wrong page.
+  const probeIndex = BATCH_SIZE + 3;
+  const [alone] = await embedDocuments([texts[probeIndex]]);
+
+  const dot = alone.reduce((sum, value, i) => sum + value * vectors[probeIndex][i], 0);
+  checkThat(
+    'vektor tetap sejajar dengan teksnya lintas batch',
+    dot > 0.99,
+    `kemiripan pada indeks ${probeIndex}: ${dot.toFixed(4)}`,
+  );
+
+  // And it must NOT match a neighbour, or the check above would pass trivially.
+  const neighbour = alone.reduce((sum, value, i) => sum + value * vectors[probeIndex + 1][i], 0);
+  checkThat(
+    'vektor tetangga memang berbeda',
+    neighbour < 0.99,
+    `kemiripan tetangga: ${neighbour.toFixed(4)}`,
+  );
+}
+
 console.log('\nisQuotaError');
 {
   checkThat('mengenali status 429', isQuotaError(Object.assign(new Error('x'), { status: 429 })));

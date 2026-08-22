@@ -11,12 +11,13 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "verify:pdf": "node --experimental-strip-types scripts/verify-pdf-engine.mjs",
-    "verify:ai": "node --conditions=react-server --experimental-strip-types scripts/verify-ai.mjs",
-    "verify": "npm run verify:pdf && npm run verify:ai && npm run verify:office",
+    "verify:ai": "node --import ./scripts/register-ts.mjs --conditions=react-server --experimental-strip-types scripts/verify-ai.mjs",
+    "verify": "node scripts/verify-all.mjs",
     "verify:office": "node --import ./scripts/register-ts.mjs --experimental-strip-types scripts/verify-office.mjs",
     "doctor:ai": "node --import ./scripts/register-ts.mjs --conditions=react-server --experimental-strip-types scripts/doctor-ai.mjs",
     "repro:upload": "node scripts/repro-upload.mjs",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "measure:ingest": "node --import ./scripts/register-ts.mjs --conditions=react-server --experimental-strip-types scripts/measure-ingest.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.18.0",

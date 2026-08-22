@@ -44,4 +44,26 @@ export const AI_LIMITS = {
   maxFileBytes: 50 * 1024 * 1024,
   maxPages: 500,
   maxDocumentsPerConversation: 3,
+
+  /**
+   * The binding limit for indexing, and the one that actually matters.
+   *
+   * Measured (`npm run measure:ingest`): extraction costs ~3 ms per page and is
+   * irrelevant; embedding costs ~0.63 s per batch of 32 chunks and is ~97% of
+   * the work. So *chunks*, not pages, decide whether ingest finishes — a dense
+   * 200-page report can produce more chunks than a sparse 500-page one.
+   *
+   * 1200 chunks ≈ 38 batches ≈ 24 s locally, which leaves real headroom inside
+   * Vercel's 60 s Hobby ceiling for the upload, download, and database writes
+   * around it, plus latency from Vercel to Google that this machine does not pay.
+   */
+  maxChunks: 1200,
+
+  /**
+   * Wall-clock budget for the embedding phase. Checked between batches so an
+   * over-running document fails with an explanation instead of being killed
+   * mid-write — a killed function leaves the document stuck in `processing`
+   * forever, with nothing the user can act on.
+   */
+  embedBudgetMs: 35_000,
 } as const;

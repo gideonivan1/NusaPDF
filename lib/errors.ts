@@ -5,6 +5,7 @@ export type ErrorCode =
   | 'E_ENCRYPTED'
   | 'E_CORRUPT'
   | 'E_TOO_LARGE'
+  | 'E_TOO_COMPLEX'
   | 'E_OOM'
   | 'E_UNSUPPORTED_TYPE'
   | 'E_SCANNED_NO_TEXT'
@@ -40,6 +41,18 @@ export const ERROR_COPY: Record<ErrorCode, ErrorCopy> = {
     href: '/compress',
     hrefLabel: 'Buka Compress PDF',
   },
+  // Separate from E_TOO_LARGE because the file size may be perfectly fine —
+  // what exceeds the limit is how much *text* it holds, which no one can judge
+  // by looking at the file. Saying "too large" would send them off to compress
+  // a document whose size was never the problem.
+  E_TOO_COMPLEX: {
+    title: 'Dokumen ini memuat terlalu banyak teks untuk diindeks sekaligus.',
+    action:
+      'Pisahkan menjadi beberapa bagian yang lebih kecil, lalu unggah satu per satu. Kuota Anda tidak terpakai.',
+    href: '/split',
+    hrefLabel: 'Buka Split PDF',
+  },
+
   E_OOM: {
     title: 'Dokumen terlalu berat untuk peramban ini.',
     action:
