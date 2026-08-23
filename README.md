@@ -1,8 +1,35 @@
+<div align="center">
+
 # NusaPDF
 
-Perkakas PDF berbasis web yang memproses berkas **di perangkat pengguna**, dilengkapi asisten AI untuk membaca dokumen panjang.
+**Perkakas PDF yang memproses berkas di peramban Anda — bukan di server kami.**
 
-Dibangun mengikuti [PRD-NusaPDF.md](./PRD-NusaPDF.md).
+[**Coba langsung → nusapdf.vercel.app**](https://nusapdf.vercel.app)
+
+[![Lisensi: MIT](https://img.shields.io/badge/Lisensi-MIT-141413)](./LICENSE)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16-141413)](https://nextjs.org)
+[![Region](https://img.shields.io/badge/Region-Singapura-CF4500)](https://vercel.com)
+
+</div>
+
+<!-- Tangkapan layar beranda. Ganti berkasnya kapan saja tanpa mengubah baris ini:
+     ![NusaPDF](./docs/screenshot.png) -->
+
+---
+
+Gabungkan, pisahkan, kompres, dan konversi PDF — termasuk ke dan dari Word, PowerPoint, serta Excel — **tanpa berkas Anda pernah meninggalkan perangkat**. Untuk dokumen panjang, tanyakan saja isinya pada asisten AI.
+
+**11 dari 12 alat berjalan sepenuhnya di peramban.** Hanya AI PDF yang mengunggah, dan itu dinyatakan terang-terangan sebelum berkas dikirim.
+
+Klaimnya bisa Anda uji sendiri: buka **DevTools → Network**, lalu jalankan Merge atau Compress. Tidak ada satu pun permintaan yang membawa isi berkas.
+
+| | |
+|---|---|
+| **Atur** | Merge · Split · Compress |
+| **Konversi** | PDF ↔ JPG · PDF ↔ Word · PDF ↔ PowerPoint · PDF ↔ Excel |
+| **AI** | Chat dengan PDF, dengan sitasi per halaman yang bisa diklik |
+
+Dibangun mengikuti [PRD-NusaPDF.md](./PRD-NusaPDF.md) — termasuk keputusan arsitektur beserta harganya, bukan hanya hasil akhirnya.
 
 ---
 
@@ -165,3 +192,11 @@ Tiga aturan yang paling mudah dilanggar:
 **Belum:** Edit PDF, OCR untuk PDF pindai, riwayat percakapan (`/riwayat`), halaman auth (`/masuk`), suite Playwright + axe di CI
 
 **Perlu telaah:** keempat halaman legal berstatus draf dan menampilkan penanda status di halamannya — telaah hukum adalah butir terbuka Q4 pada PRD.
+
+---
+
+## Lisensi
+
+[MIT](./LICENSE) — © 2026 Gideon Ivan.
+
+Silakan dipakai, dipelajari, dan dikembangkan. Bila Anda menjalankan instans sendiri, siapkan kredensial Supabase dan Gemini Anda sendiri; tidak ada yang ikut di repo ini.
