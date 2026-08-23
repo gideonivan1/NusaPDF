@@ -12,7 +12,7 @@ export default function PrivasiPage() {
   return (
     <ContentPage
       eyebrow="Privasi"
-      title="Kami tidak bisa membocorkan berkas yang tidak pernah kami terima."
+      title="Berkas tetap di Peramban Anda, bukan Server Kami."
       lead="Sebagian besar layanan PDF gratis mengunggah dokumen Anda ke server mereka. Di NusaPDF, sebelas dari dua belas alat tidak perlu melakukan itu — dan satu alat yang perlu, kami nyatakan terang-terangan."
       updated="22 Agustus 2026"
     >
