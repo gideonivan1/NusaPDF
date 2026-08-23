@@ -1,5 +1,9 @@
 'use client';
 
+// Side-effect import: installs Uint8Array.toBase64/fromBase64, which pdf.js
+// uses on the main thread and Chrome below ~140 does not have. Must come before
+// pdf.js is loaded. The worker gets the same polyfill prepended at copy time.
+import './uint8-polyfill';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import { NusaError } from '@/lib/errors';
 

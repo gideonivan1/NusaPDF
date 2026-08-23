@@ -24,6 +24,14 @@ function check(label, actual, expected) {
   }
 }
 
+function checkThat(label, condition, detail = '') {
+  console.log(`${condition ? '  PASS' : '  FAIL'}  ${label}`);
+  if (!condition) {
+    failures++;
+    if (detail) console.log(`        ${detail}`);
+  }
+}
+
 /** Builds a PDF whose pages are labelled, so page identity survives round-trips. */
 async function makeFixture(tag, pageCount) {
   const doc = await PDFDocument.create();
@@ -82,6 +90,70 @@ async function readLabels(bytes) {
 }
 
 console.log('\nNusaPDF — verifikasi mesin PDF\n');
+
+/* ============================== polyfill Uint8Array untuk peramban lama === */
+console.log('polyfill Uint8Array');
+{
+  const { readFileSync, existsSync } = await import('node:fs');
+  const vm = await import('node:vm');
+
+  const source = readFileSync(new URL('../lib/pdf/uint8-polyfill.js', import.meta.url), 'utf8');
+
+  // Run in a context where the methods genuinely do not exist. Node has them
+  // natively, so testing against the real Uint8Array would pass no matter what
+  // the polyfill did — which is exactly how a browser-only bug stays hidden.
+  const sandbox = {
+    Uint8Array: class extends Uint8Array {},
+    btoa: (s) => Buffer.from(s, 'latin1').toString('base64'),
+    atob: (s) => Buffer.from(s, 'base64').toString('latin1'),
+    Object, TypeError, SyntaxError, Number, String, Math,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox);
+
+  const U = sandbox.Uint8Array;
+
+  check('toHex memformat byte dengan nol di depan', new U([0, 1, 15, 16, 255, 128]).toHex(), '00010f10ff80');
+  check('toHex pada array kosong', new U([]).toHex(), '');
+  check('fromHex membalik toHex', U.fromHex('00010f10ff80').toHex(), '00010f10ff80');
+  check('toBase64', new U([0, 1, 15, 16, 255, 128]).toBase64(), 'AAEPEP+A');
+  check('fromBase64 membalik toBase64', U.fromBase64('AAEPEP+A').toHex(), '00010f10ff80');
+  check('base64url memakai alfabet berbeda', new U([255, 224]).toBase64({ alphabet: 'base64url' }), '_-A=');
+  check('omitPadding membuang tanda sama dengan', new U([255]).toBase64({ omitPadding: true }), '/w');
+
+  // btoa overflows when a large array is spread into String.fromCharCode; the
+  // chunking exists for this case and nothing smaller would exercise it.
+  const big = new U(200_000).fill(65);
+  checkThat('array besar tidak meluapkan argumen', U.fromBase64(big.toBase64()).length === 200_000);
+
+  // Native implementations must be left alone.
+  const native = { toHex: () => 'asli' };
+  Object.setPrototypeOf(native, Object.prototype);
+  checkThat('tidak menimpa implementasi bawaan', typeof Uint8Array.prototype.toHex === 'function');
+}
+
+console.log('\nworker pdf.js yang disajikan');
+{
+  const { readFileSync, existsSync } = await import('node:fs');
+  const workerPath = new URL('../public/pdf.worker.min.mjs', import.meta.url);
+
+  if (!existsSync(workerPath)) {
+    console.log('  LEWAT  public/pdf.worker.min.mjs belum dibuat (jalankan npm run build)');
+  } else {
+    const worker = readFileSync(workerPath, 'utf8');
+
+    const installed = worker.indexOf("define(proto, 'toHex'");
+    const used = worker.lastIndexOf('.toHex()');
+
+    checkThat('polyfill ikut tersuntik ke worker', installed >= 0);
+    checkThat(
+      'polyfill terpasang sebelum pdf.js memakainya',
+      installed >= 0 && installed < used,
+      `pasang=${installed} pakai=${used}`,
+    );
+  }
+}
 
 /* ---------------------------------------------------------------- countPages */
 console.log('countPages');
