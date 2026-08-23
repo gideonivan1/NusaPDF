@@ -12,8 +12,7 @@
 
 </div>
 
-<!-- Tangkapan layar beranda. Ganti berkasnya kapan saja tanpa mengubah baris ini:
-     ![NusaPDF](./docs/screenshot.png) -->
+![Beranda NusaPDF: judul hero, tiga jaminan, dan konstelasi ikon alat](./docs/screenshot.png)
 
 ---
 
