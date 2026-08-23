@@ -87,8 +87,15 @@ export default function KukiPage() {
 
       <h2>Analitik</h2>
       <p>
-        Kami mengukur penggunaan layanan secara agregat — alat mana yang dipakai dan seberapa
-        sering gagal — tanpa memakai kuki pelacak dan tanpa merekam isi berkas Anda.
+        Kami memakai <strong>Vercel Analytics</strong> untuk menghitung kunjungan halaman
+        secara agregat: halaman mana yang dibuka, dari mana pengunjung datang, dan jenis
+        perangkat yang dipakai.
+      </p>
+      <p>
+        Layanan ini <strong>tidak memakai kuki</strong> dan tidak mengikuti Anda ke situs
+        lain. Ia juga tidak melihat berkas Anda — pengukurannya berhenti pada tingkat
+        halaman, dan berkas pada alat yang berjalan lokal memang tidak pernah sampai ke
+        kami untuk bisa diukur.
       </p>
 
       <h2>Mengelola kuki</h2>

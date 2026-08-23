@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Sofia_Sans } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import { NavPill } from '@/components/shell/NavPill';
 import { Footer } from '@/components/shell/Footer';
 import './globals.css';
@@ -58,6 +59,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </main>
 
         <Footer />
+
+        {/*
+          Cookieless by design: it counts page views without setting a cookie or
+          following anyone between sites. That matters here beyond taste — the
+          cookie policy states there are no tracking cookies, and a
+          cookie-based analytics script would make that page untrue the moment
+          it shipped.
+        */}
+        <Analytics />
       </body>
     </html>
   );
