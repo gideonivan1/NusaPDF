@@ -55,8 +55,9 @@ Tanpa `.env.local`, aplikasi tetap berjalan dan AI PDF menampilkan pemberitahuan
 | `npm run verify` | Jalankan seluruh pemeriksaan di bawah |
 | `npm run verify:pdf` | Uji mesin PDF terhadap fixture buatan |
 | `npm run verify:ai` | Uji ekstraksi teks, pemotongan, dan failover kunci Gemini |
-| `npm run verify:office` | Uji baca/tulis .xlsx & .pptx, mesin tata letak PDF, dan rekonstruksi PDF → Word |
+| `npm run verify:office` | Uji baca/tulis .xlsx & .pptx, mesin tata letak PDF, rekonstruksi PDF → Word, dan penataan Word → PDF |
 | `npm run convert:word -- <berkas.pdf>` | Jalankan PDF → Word dari terminal, dengan kode yang sama dengan peramban |
+| `npm run convert:pdf -- <berkas.docx>` | Jalankan Word → PDF dari terminal, dengan kode yang sama dengan peramban |
 
 ---
 
@@ -82,9 +83,9 @@ Pemrosesan bersifat **hybrid**, dan pembagiannya adalah keputusan produk, bukan 
 
 ### Konversi Office
 
-Berjalan di peramban, bukan server. Untuk Word/PowerPoint/Excel → PDF dan PDF → Excel, ini keputusan yang punya harga, dan harganya **fidelitas isi, bukan fidelitas tata letak**: teks, daftar, dan tabel berpindah; jenis huruf, posisi gambar, header/footer, dan penomoran halaman asli tidak direkonstruksi. Alternatifnya — LibreOffice dalam kontainer atau API konversi berbayar — memberi kemiripan piksel tetapi membatalkan janji utama produk dan menuntut infrastruktur yang belum ada. Setiap alat konversi menyatakan batas itu di panelnya sebelum tombol ditekan (PRD risiko R1).
+Berjalan di peramban, bukan server. Untuk PowerPoint/Excel → PDF dan PDF → Excel, ini keputusan yang punya harga, dan harganya **fidelitas isi, bukan fidelitas tata letak**: teks, daftar, dan tabel berpindah; jenis huruf, posisi gambar, header/footer, dan penomoran halaman asli tidak direkonstruksi. Alternatifnya — LibreOffice dalam kontainer atau API konversi berbayar — memberi kemiripan piksel tetapi membatalkan janji utama produk dan menuntut infrastruktur yang belum ada. Setiap alat konversi menyatakan batas itu di panelnya sebelum tombol ditekan (PRD risiko R1).
 
-Satu pengecualian: **PDF → PowerPoint** merender tiap halaman sebagai gambar slide, jadi tampilannya justru terjaga sempurna — dengan konsekuensi teksnya tidak bisa diedit.
+Pengecualian pertama: **PDF → PowerPoint** merender tiap halaman sebagai gambar slide, jadi tampilannya justru terjaga sempurna — dengan konsekuensi teksnya tidak bisa diedit.
 
 ### PDF → Word
 
@@ -109,7 +110,32 @@ npm run convert:word -- laporan.pdf            # -> laporan.docx
 npm run convert:word -- laporan.pdf --pages 3-6
 ```
 
-Pustaka: `mammoth` (baca .docx), `docx` (tulis .docx), `pptxgenjs` (tulis .pptx). Pembaca `.xlsx` dan `.pptx` ditulis sendiri di `lib/office/` di atas `fflate` — build npm SheetJS membawa advisory prototype-pollution **tanpa perbaikan**, dan itu tidak bisa diterima ketika input-nya berkas yang diseret pengguna. Seluruh pustaka berat diimpor dinamis agar hanya terunduh saat alatnya dibuka.
+### Word → PDF
+
+Pengecualian ketiga, arah sebaliknya. `lib/office/docx-to-pdf/` adalah penata huruf kecil yang meniru Word, bukan pengubah ke HTML:
+
+1. **`document.ts`** membaca .docx menjadi model: seksi (ukuran halaman, margin, header/footer default dan halaman pertama), paragraf dengan properti yang sudah diwariskan dari gaya, run, tab, field PAGE/NUMPAGES, tabel (termasuk tabel mengambang), gambar inline, serta objek jangkar — gambar, bentuk, kotak teks, dan grup.
+2. **`styles.ts`** menyelesaikan rantai gaya (docDefaults → gaya tabel → gaya paragraf → gaya karakter → langsung), tema (huruf dan warna), serta penomoran.
+3. **`layout.ts`** memecah baris dan halaman, lalu **`render.ts`** menggambarnya dengan pdf-lib.
+
+Kemiripan tampilan bergantung pada huruf. Karena itu `public/fonts/` membawa pengganti yang **metriknya identik** dengan huruf Windows, jadi setiap kata selebar aslinya dan pemenggalan baris ikut sama: Liberation Sans/Serif/Mono (Arial, Times New Roman, Courier New), Liberation Sans Narrow (Arial Narrow), dan Carlito (Calibri). Lisensinya (OFL, dan GPLv2 dengan pengecualian font) ada di sebelah berkasnya. Huruf hanya diunduh bila dokumen memakainya. Carlito disematkan utuh karena subsetting pdf-lib merusak glifnya.
+
+Aturan tata letaknya **diukur terhadap Word**, dengan membandingkan posisi baris dari Word sendiri dan hasil ekspor PDF-nya, bukan diambil dari spesifikasi:
+
+- Tinggi baris "single" mengikuti metrik win (ascent + descent), ditambah lineGap bila huruf memintanya. Spasi "multiple" hanya menambah (faktor − 1) × tinggi dasar. Tanda paragraf hanya menentukan tinggi baris yang tidak berisi teks terlihat, dan karakter tab tidak pernah menentukannya.
+- Rata kanan-kiri boleh **menyempitkan** spasi hingga 75% supaya satu kata lagi muat, termasuk spasi tepat sebelum kata itu.
+- Jarak antarparagraf memakai max(after, before). Space-before dibuang di awal halaman. Widow/orphan control aktif secara bawaan.
+- Tinggi baris tabel sudah termasuk tebal garis tepinya. Tinggi minimum baris tidak menghitung margin atas-bawah sel. Tabel dengan *cell spacing* menggambar tiap sel sebagai kotak sendiri.
+- Baris tabel boleh **terpecah** ke halaman berikutnya (kecuali ditandai tidak boleh). Pemotongan hanya di antara baris teks, dengan widow/orphan control berlaku juga di dalam sel. Gambar tetap bersama paragraf jangkarnya. Bila ada sel yang tidak kebagian satu baris pun, seluruh baris pindah.
+- Teks **mengalir mengelilingi** gambar mengambang (square, tight, top-and-bottom), mengikuti poligon wrap baris per baris, di kiri lalu kanan pada baris yang sama. Satu baris baru diletakkan di samping gambar bila kata pertamanya muat. Paragraf kosong butuh celah minimal sekitar 10 pt. Gambar yang tidak muat di sisa halaman membawa paragrafnya ke halaman berikut, juga di dalam sel tabel.
+
+Diuji pada dua laporan nyata. Pada laporan 20 halaman, setiap baris jatuh di halaman yang sama dengan PDF buatan Word, dengan selisih posisi rata-rata sekitar 0,2 pt. Pada laporan 23 halaman yang penuh gambar mengambang di dalam sel tabel, 737 dari 751 baris jatuh di halaman yang sama. Yang belum digambar: grafik bawaan Word (chart), SmartArt, dan persamaan. Huruf di luar daftar di atas memakai pengganti terdekat, sehingga pemenggalannya bisa bergeser.
+
+```bash
+npm run convert:pdf -- laporan.docx            # -> laporan.pdf
+```
+
+Pustaka: `docx` (tulis .docx), `@pdf-lib/fontkit` (menyematkan huruf TrueType), `pptxgenjs` (tulis .pptx). Pembaca `.xlsx` dan `.pptx` ditulis sendiri di `lib/office/` di atas `fflate` — build npm SheetJS membawa advisory prototype-pollution **tanpa perbaikan**, dan itu tidak bisa diterima ketika input-nya berkas yang diseret pengguna. Seluruh pustaka berat diimpor dinamis agar hanya terunduh saat alatnya dibuka.
 
 `lib/office/pdf-writer.ts` adalah mesin tata letak kecil di atas pdf-lib: pdf-lib menggambar teks pada koordinat dan tidak mengenal alur, pembungkusan, atau paginasi. Font standar PDF ber-encoding WinAnsi dan pdf-lib **melempar galat** pada karakter di luarnya — karena itu ada `sanitise()`, supaya satu tanda kutip miring tidak menggagalkan seluruh konversi.
 
@@ -181,10 +207,12 @@ lib/
   pdf/                worker + render + ekstraksi teks berposisi + page-content
   office/             ooxml, xlsx, pptx, pdf-writer, convert
   office/pdf-to-docx/ PDF → Word: tata letak, tabel, gambar, footer
+  office/docx-to-pdf/ Word → PDF: gaya, pemecahan baris & halaman, gambar, bentuk
   ai/                 gemini, embed, retrieve, kuota, key-pool
   supabase/           client, server, config
   store/queue.ts      antrean berkas — HANYA di memori
   hooks/ errors.ts tools.ts utils.ts
+public/fonts/         huruf bermetrik identik untuk Word → PDF (+ lisensi)
 supabase/migrations/  skema + RLS + pgvector
 scripts/              copy worker pdf.js, 3 skrip verifikasi
 ```

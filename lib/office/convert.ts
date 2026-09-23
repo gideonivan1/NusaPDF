@@ -5,7 +5,6 @@ import { extractParagraphs, extractTable, getLoadedDocument, pagesToImages } fro
 import { convertPdfToDocx, type CanvasBackend } from './pdf-to-docx';
 import {
   A4_LANDSCAPE,
-  A4_PORTRAIT,
   renderBlocksToPdf,
   sanitise,
   type Block,
@@ -21,13 +20,14 @@ import { readWorkbook, writeWorkbook, type Sheet } from './xlsx';
  * gives higher layout fidelity but breaks the product's central promise that
  * files are not uploaded, and needs infrastructure that does not exist here.
  *
- * PDF to Word is the exception that keeps layout as well: it rebuilds the
- * page from the PDF's drawing operations (lib/office/pdf-to-docx), so fonts,
- * spacing, tables, pictures, and pagination come across. The other directions
- * deliver **content fidelity, not layout fidelity**: text, structure, and
- * tabular data survive; original pagination, fonts, and decorative styling do
- * not. The UI states each tool's limit plainly rather than implying a
- * pixel-perfect clone (PRD risk R1).
+ * PDF to Word and Word to PDF keep the layout as well as the content. PDF to
+ * Word rebuilds pages from the PDF's drawing operations (lib/office/pdf-to-docx);
+ * Word to PDF typesets the document the way Word does, with metric-identical
+ * open fonts (lib/office/docx-to-pdf). The remaining directions deliver
+ * **content fidelity, not layout fidelity**: text, structure, and tabular data
+ * survive; original pagination, fonts, and decorative styling do not. The UI
+ * states each tool's limit plainly rather than implying a pixel-perfect clone
+ * (PRD risk R1).
  *
  * Each heavy library is imported dynamically so it only downloads when the
  * matching tool is actually opened.
@@ -258,123 +258,53 @@ export async function pdfToExcel(
    Word -> PDF
    ========================================================================== */
 
-export async function wordToPdf(file: File, onProgress?: Progress): Promise<Blob> {
-  const mammoth = await import('mammoth');
-
-  onProgress?.(0, 3, 'Membaca dokumen Word…');
-
-  let html: string;
-  try {
-    const result = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
-    html = result.value;
-  } catch (error) {
-    throw new NusaError(
-      'E_CORRUPT',
-      error instanceof Error ? error.message : 'Dokumen Word tidak dapat dibaca',
-    );
-  }
-
-  onProgress?.(1, 3, 'Menata ulang isi…');
-  const blocks = htmlToBlocks(html);
-
-  if (blocks.length === 0) throw new NusaError('E_CORRUPT', 'Dokumen tidak memuat teks');
-
-  onProgress?.(2, 3, 'Menyusun PDF…');
-  const bytes = await renderBlocksToPdf(blocks, {
-    page: A4_PORTRAIT,
-    baseSize: 11,
-    pageNumbers: true,
-  });
-
-  onProgress?.(3, 3);
-  return new Blob([bytes as BlobPart], { type: 'application/pdf' });
+/** Fonts are static files under /fonts, fetched only when a document needs them. */
+async function fetchFont(file: string): Promise<Uint8Array> {
+  const response = await fetch(`/fonts/${file}`);
+  if (!response.ok) throw new NusaError('E_NETWORK', `Huruf ${file} gagal dimuat`);
+  return new Uint8Array(await response.arrayBuffer());
 }
 
-/** Maps the subset of HTML that mammoth emits onto layout blocks. */
-function htmlToBlocks(html: string): Block[] {
-  const document = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
-  const blocks: Block[] = [];
+/** GIF, BMP, and the like go through a canvas to become PNG, which PDF can hold. */
+async function imageToPng(image: { data: Uint8Array; mime: string }): Promise<{ data: Uint8Array; type: 'png' } | null> {
+  if (!/^image\/(gif|bmp|webp|tiff?)$/.test(image.mime)) return null;
+  try {
+    const bitmap = await createImageBitmap(new Blob([image.data as BlobPart], { type: image.mime }));
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    canvas.width = 0;
+    canvas.height = 0;
+    return blob ? { data: new Uint8Array(await blob.arrayBuffer()), type: 'png' } : null;
+  } catch {
+    return null;
+  }
+}
 
-  /**
-   * Word puts most images inside a paragraph, so an element has to be checked
-   * for images *and* text. Handling only one of the two is what made pictures
-   * disappear from converted documents: `<p>` was read with `textContent`,
-   * which silently discards any `<img>` it contains.
-   */
-  const pushImage = (image: Element) => {
-    const src = image.getAttribute('src');
-    // mammoth inlines images as base64 data URIs; anything else would be a
-    // remote reference we deliberately will not fetch.
-    if (!src?.startsWith('data:')) return;
-    blocks.push({
-      type: 'image',
-      dataUrl: src,
-      alt: image.getAttribute('alt') ?? undefined,
+/**
+ * Typesets the document the way Word does and draws it to PDF: its fonts
+ * (through metric-identical open substitutes), spacing, numbering, tables,
+ * pictures, shapes, and footers. See lib/office/docx-to-pdf for how.
+ */
+export async function wordToPdf(file: File, onProgress?: Progress): Promise<Blob> {
+  const { convertDocxToPdf } = await import('./docx-to-pdf');
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await convertDocxToPdf(await file.arrayBuffer(), {
+      loadFont: fetchFont,
+      convertImage: imageToPng,
+      onProgress,
     });
-  };
+  } catch (error) {
+    if (error instanceof NusaError) throw error;
+    throw new NusaError('E_CORRUPT', error instanceof Error ? error.message : 'Dokumen Word tidak dapat dibaca');
+  }
 
-  const emitImagesWithin = (container: Element) => {
-    for (const image of Array.from(container.querySelectorAll('img'))) pushImage(image);
-  };
-
-  const walk = (node: Element) => {
-    for (const child of Array.from(node.children)) {
-      const tag = child.tagName.toLowerCase();
-
-      switch (tag) {
-        case 'h1':
-        case 'h2':
-        case 'h3':
-        case 'h4':
-        case 'h5':
-        case 'h6': {
-          const level = Math.min(3, Number(tag[1])) as 1 | 2 | 3;
-          const text = child.textContent?.trim();
-          if (text) blocks.push({ type: 'heading', level, text });
-          break;
-        }
-
-        case 'img': {
-          pushImage(child);
-          break;
-        }
-
-        case 'p': {
-          emitImagesWithin(child);
-          const text = child.textContent?.trim();
-          if (text) blocks.push({ type: 'paragraph', text });
-          break;
-        }
-
-        case 'ul':
-        case 'ol': {
-          const items = Array.from(child.querySelectorAll(':scope > li'))
-            .map((li) => li.textContent?.trim() ?? '')
-            .filter(Boolean);
-          if (items.length > 0) blocks.push({ type: 'list', ordered: tag === 'ol', items });
-          break;
-        }
-
-        case 'table': {
-          const rows = Array.from(child.querySelectorAll('tr')).map((tr) =>
-            Array.from(tr.querySelectorAll('th, td')).map(
-              (cell) => cell.textContent?.trim() ?? '',
-            ),
-          );
-          const hasHeader = child.querySelector('th') !== null;
-          if (rows.length > 0) blocks.push({ type: 'table', rows, headerRow: hasHeader });
-          break;
-        }
-
-        default:
-          // Wrappers such as <div> carry no meaning here; descend into them.
-          walk(child);
-      }
-    }
-  };
-
-  walk(document.body);
-  return blocks;
+  return new Blob([bytes as BlobPart], { type: 'application/pdf' });
 }
 
 /* ==========================================================================

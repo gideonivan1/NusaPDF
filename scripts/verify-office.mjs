@@ -9,6 +9,7 @@
  *
  * Run: npm run verify:office
  */
+import { readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import { DOMParser } from 'linkedom';
 import { PDFDocument } from 'pdf-lib';
@@ -518,6 +519,141 @@ console.log('\nPDF -> Word — rekonstruksi tata letak');
   checkThat('footer tidak terduplikasi di badan dokumen', !body.includes('Laporan uji'));
   checkThat('halaman 2 dimulai di halaman baru', body.includes('<w:pageBreakBefore/>'));
   check('margin kiri terbaca dari halaman', model.margins.left, 72);
+}
+
+/* ============================================================ Word -> PDF */
+console.log('\nWord -> PDF — tata letak ala Word');
+{
+  const docx = await import('docx');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { convertDocxToPdf } = await import('../lib/office/docx-to-pdf/index.ts');
+  const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, ImageRun, Footer, PageNumber, AlignmentType, LineRuleType, ShadingType, LevelFormat, HeadingLevel } = docx;
+
+  const swatch = createCanvas(80, 40);
+  swatch.getContext('2d').fillStyle = '#2255aa';
+  swatch.getContext('2d').fillRect(0, 0, 80, 40);
+  const png = await swatch.encode('png');
+
+  const body = 'Pelaksanaan kegiatan selama periode Januari hingga Februari menunjukkan bahwa dukungan asisten tenaga ahli memberikan kontribusi nyata terhadap fungsi Subdirektorat Data dan Sistem Informasi.';
+  const cell = (text, fill) =>
+    new TableCell({
+      children: [new Paragraph({ children: [new TextRun({ text, font: 'Arial', size: 20 })] })],
+      shading: fill ? { fill, type: ShadingType.CLEAR, color: 'auto' } : undefined,
+    });
+
+  const source = new Document({
+    numbering: {
+      config: [{ reference: 'angka', levels: [{ level: 0, format: LevelFormat.DECIMAL, text: '%1.', alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] }],
+    },
+    sections: [
+      {
+        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
+        footers: { default: new Footer({ children: [new Paragraph({ children: [new TextRun({ text: 'Halaman ', font: 'Arial' }), new TextRun({ children: [PageNumber.CURRENT], font: 'Arial' })] })] }) },
+        children: [
+          new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'BAB I PENDAHULUAN', bold: true, font: 'Arial', size: 28 })] }),
+          new Paragraph({ alignment: AlignmentType.JUSTIFIED, spacing: { line: 360, lineRule: LineRuleType.AUTO }, children: [new TextRun({ text: body, font: 'Times New Roman', size: 24 })] }),
+          new Paragraph({ numbering: { reference: 'angka', level: 0 }, children: [new TextRun({ text: 'Butir pertama', font: 'Arial', size: 24 })] }),
+          new Paragraph({ numbering: { reference: 'angka', level: 0 }, children: [new TextRun({ text: 'Butir kedua', font: 'Arial', size: 24 })] }),
+          new Table({
+            width: { size: 9000, type: WidthType.DXA },
+            columnWidths: [3000, 6000],
+            rows: [new TableRow({ children: [cell('Kolom A', 'ACB9CA'), cell('Kolom B')] }), new TableRow({ children: [cell('Alpha'), cell('Beta')] })],
+          }),
+          new Paragraph({ children: [new ImageRun({ type: 'png', data: png, transformation: { width: 120, height: 60 } })] }),
+          new Paragraph({ pageBreakBefore: true, children: [new TextRun({ text: 'Halaman kedua dimulai di sini.', font: 'Calibri', size: 22 })] }),
+        ],
+      },
+    ],
+  });
+
+  const docxBytes = await Packer.toBuffer(source);
+  const loaded = [];
+  const pdfBytes = await convertDocxToPdf(docxBytes.buffer.slice(docxBytes.byteOffset, docxBytes.byteOffset + docxBytes.byteLength), {
+    loadFont: async (file) => {
+      loaded.push(file);
+      return new Uint8Array(readFileSync(new URL(`../public/fonts/${file}`, import.meta.url)));
+    },
+  });
+
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(pdfBytes) }).promise;
+  const pageText = async (n) => (await (await pdf.getPage(n)).getTextContent()).items.map((item) => item.str).join(' ').replace(/\s+/g, ' ');
+  const first = await pageText(1);
+  const second = pdf.numPages >= 2 ? await pageText(2) : '';
+
+  check('page break memulai halaman baru', pdf.numPages, 2);
+  checkThat('judul dan isi terbawa', first.includes('BAB I PENDAHULUAN') && first.includes('Subdirektorat'));
+  checkThat('penomoran daftar dihitung', /1\.\s*Butir pertama/.test(first) && /2\.\s*Butir kedua/.test(first));
+  checkThat('isi tabel terbawa', first.includes('Alpha') && first.includes('Beta'));
+  checkThat('field PAGE di footer bernilai per halaman', /Halaman 1/.test(first) && /Halaman 2/.test(second));
+  checkThat('font bermetrik identik yang dipakai: Arial, Times, Calibri', ['LiberationSans-Regular.ttf', 'LiberationSerif-Regular.ttf', 'Carlito-Regular.ttf'].every((file) => loaded.includes(file)));
+  const raw = Buffer.from(pdfBytes).toString('latin1');
+  checkThat('gambar ikut tersisip', raw.includes('/Subtype /Image') || raw.includes('/Image'));
+  const firstPage = await pdf.getPage(1);
+  const content = await firstPage.getTextContent();
+  await firstPage.getOperatorList();
+  const fontNames = [...new Set(content.items.map((item) => item.fontName))].map((id) => firstPage.commonObjs.get(id)?.name ?? '');
+  checkThat('huruf pengganti disematkan ke PDF', fontNames.some((name) => /Liberation/.test(name)), fontNames.join(', '));
+
+  // Floating picture with text wrapping, and a table row taller than a page.
+  const { TextWrappingType, TextWrappingSide, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom } = docx;
+  const px = (pt) => (pt * 96) / 72;
+  const flowing = new Document({
+    sections: [
+      {
+        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
+        children: [
+          new Paragraph({
+            children: [
+              new ImageRun({
+                type: 'png',
+                data: png,
+                transformation: { width: px(200), height: px(150) },
+                floating: {
+                  horizontalPosition: { relative: HorizontalPositionRelativeFrom.MARGIN, offset: 0 },
+                  verticalPosition: { relative: VerticalPositionRelativeFrom.PARAGRAPH, offset: 0 },
+                  wrap: { type: TextWrappingType.SQUARE, side: TextWrappingSide.BOTH_SIDES },
+                },
+              }),
+            ],
+          }),
+          new Paragraph({ children: [new TextRun({ text: `${body} ${body} ${body}`, font: 'Arial', size: 22 })] }),
+          new Table({
+            width: { size: 9000, type: WidthType.DXA },
+            columnWidths: [9000],
+            rows: [
+              new TableRow({
+                children: [
+                  new TableCell({
+                    children: Array.from({ length: 90 }, (_, index) => new Paragraph({ children: [new TextRun({ text: `Baris ${index + 1}`, font: 'Arial', size: 22 })] })),
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      },
+    ],
+  });
+  const flowingBytes = await Packer.toBuffer(flowing);
+  const flowPdf = await pdfjs.getDocument({
+    data: new Uint8Array(
+      await convertDocxToPdf(flowingBytes.buffer.slice(flowingBytes.byteOffset, flowingBytes.byteOffset + flowingBytes.byteLength), {
+        loadFont: async (file) => new Uint8Array(readFileSync(new URL(`../public/fonts/${file}`, import.meta.url))),
+      }),
+    ),
+  }).promise;
+  const flowPage = await flowPdf.getPage(1);
+  const height = flowPage.getViewport({ scale: 1 }).height;
+  const beside = (await flowPage.getTextContent()).items
+    .filter((item) => item.str.trim() && height - item.transform[5] > 72 && height - item.transform[5] < 72 + 150)
+    .filter((item) => !/^Baris/.test(item.str));
+  checkThat('teks mengalir di samping gambar, tidak menimpanya', beside.length > 0 && beside.every((item) => item.transform[4] >= 72 + 200 - 0.5), beside.slice(0, 4).map((item) => `${item.str.slice(0, 12)}@${item.transform[4].toFixed(1)},${(height - item.transform[5]).toFixed(1)}`).join(' '));
+  const rowText = [];
+  for (let n = 1; n <= flowPdf.numPages; n++) rowText.push(await (await (await flowPdf.getPage(n)).getTextContent()).items.map((item) => item.str).join(' '));
+  const firstRowPage = rowText.findIndex((text) => /Baris 1\b/.test(text));
+  const lastRowPage = rowText.findIndex((text) => /Baris 90\b/.test(text));
+  checkThat('baris tabel yang tinggi terpecah ke halaman berikutnya', firstRowPage === 0 && lastRowPage > 0, `Baris 1 di hal. ${firstRowPage + 1}, Baris 90 di hal. ${lastRowPage + 1}`);
 }
 
 console.log(

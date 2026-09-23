@@ -22,9 +22,9 @@ const SOURCES: Record<
     slug: 'word-to-pdf',
     runLabel: 'Ubah jadi PDF',
     expectation:
-      'Judul, paragraf, daftar, dan tabel dibaca dari dokumen lalu ditata ulang ke halaman A4.',
+      'Dokumen ditata seperti di Word: ukuran halaman dan margin, jenis serta ukuran huruf, spasi, penomoran, daftar isi, tabel, gambar, bentuk dan kotak teks, serta header/footer beserta nomor halaman.',
     caveat:
-      'Hasilnya ditata ulang, bukan disalin persis. Jenis huruf, penomoran halaman asli, header/footer, dan posisi gambar tidak dipertahankan.',
+      'Huruf dibuat ulang dengan pengganti bermetrik identik (Arial, Times New Roman, Calibri, Arial Narrow, Courier New), jadi pemenggalan baris dan halaman sama; huruf lain memakai pengganti terdekat. Grafik bawaan Word (chart), SmartArt, dan persamaan belum digambar.',
     legacy: '.doc',
   },
   powerpoint: {
