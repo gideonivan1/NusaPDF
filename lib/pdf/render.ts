@@ -424,6 +424,18 @@ export async function extractTable(id: string, pageNumber: number): Promise<stri
   });
 }
 
+/**
+ * The already-open pdf.js document and its operator table, for the converters
+ * that need more than text — PDF to Word reads vector drawing and image
+ * placement straight from the operator list.
+ */
+export async function getLoadedDocument(id: string) {
+  const cached = documentCache.get(id);
+  if (!cached) throw new NusaError('E_UNKNOWN', `Dokumen ${id} belum dimuat`);
+  const pdfjs = await loadPdfjs();
+  return { doc: cached.doc, OPS: pdfjs.OPS as unknown as Record<string, number> };
+}
+
 export function closeDocument(id: string): void {
   const cached = documentCache.get(id);
   if (!cached) return;

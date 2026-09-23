@@ -400,6 +400,126 @@ console.log('\npdf-writer — gambar');
   checkThat('data URI rusak tidak menggagalkan konversi', doc.getPageCount() === 1);
 }
 
+/* ============================================================ PDF -> Word */
+console.log('\nPDF -> Word — rekonstruksi tata letak');
+{
+  const { parseFontName } = await import('../lib/pdf/page-content.ts');
+  check('nama font subset + gaya PostScript', parseFontName('BCDEEE+Arial-BoldMT'), {
+    family: 'Arial',
+    bold: true,
+    italic: false,
+  });
+  check('bobot yang bagi Word adalah keluarga sendiri', parseFontName('ABCDEF+Calibri-Light').family, 'Calibri Light');
+  check('CamelCase jadi nama keluarga berspasi', parseFontName('TimesNewRomanPS-BoldItalicMT'), {
+    family: 'Times New Roman',
+    bold: true,
+    italic: true,
+  });
+  check('Arial Narrow tetap keluarganya sendiri', parseFontName('ArialNarrow').family, 'Arial Narrow');
+}
+
+{
+  const { unzipSync, strFromU8 } = await import('fflate');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const docx = await import('docx');
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { convertPdfToDocx } = await import('../lib/office/pdf-to-docx/index.ts');
+  const { StandardFonts, rgb } = await import('pdf-lib');
+
+  // A fixture with the structures that used to go missing: a bold heading,
+  // a ruled table with a merged cell and a shaded header, a picture, and a
+  // footer with a page number on every page.
+  const pdf = await PDFDocument.create();
+  const regular = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+  const swatch = createCanvas(60, 40);
+  const context = swatch.getContext('2d');
+  context.fillStyle = '#cc3300';
+  context.fillRect(0, 0, 60, 40);
+  const picture = await pdf.embedPng(await swatch.encode('png'));
+
+  const H = 842;
+  const ink = rgb(0, 0, 0);
+  const line = (page, x0, y0, x1, y1) =>
+    page.drawRectangle({ x: x0, y: H - y1, width: x1 - x0, height: y1 - y0, color: ink });
+
+  for (let n = 1; n <= 2; n++) {
+    const page = pdf.addPage([595, H]);
+    page.drawText('Laporan uji', { x: 72, y: 50, size: 10, font: regular });
+    page.drawText(String(n), { x: 517, y: 50, size: 10, font: regular });
+    page.drawRectangle({ x: 72, y: 64, width: 451, height: 2, color: rgb(0.5, 0.23, 0.04) });
+    // Body text at the margin, as every real page has.
+    for (const [index, y] of [600, 616, 632].entries()) {
+      page.drawText(`Baris isi ${index + 1} yang cukup panjang untuk mewakili teks badan dokumen pada halaman ini.`, {
+        x: 72,
+        y: H - y,
+        size: 11,
+        font: regular,
+      });
+    }
+
+    if (n === 1) {
+      page.drawText('BAB I PENDAHULUAN', { x: 72, y: H - 90, size: 14, font: bold });
+
+      const xs = [72, 200, 350, 523];
+      const ys = [120, 142, 164, 186];
+      // Header shading first, then the rules on top — Word's own order.
+      page.drawRectangle({ x: 72, y: H - 142, width: 451, height: 22, color: rgb(0.675, 0.725, 0.792) });
+      for (const y of ys) line(page, 72, y - 0.25, 523, y + 0.25);
+      for (const [index, x] of xs.entries()) {
+        // No rule between the first two columns on the last row: a merged cell.
+        const inner = index === 1;
+        line(page, x - 0.25, ys[0], x + 0.25, inner ? ys[2] : ys[3]);
+      }
+
+      const cell = (text, x, y, font = regular) => page.drawText(text, { x: x + 5, y: H - y, size: 10, font });
+      cell('No', 72, 135, bold);
+      cell('Nama', 200, 135, bold);
+      cell('Nilai', 350, 135, bold);
+      cell('1', 72, 157);
+      cell('Alpha', 200, 157);
+      cell('10', 350, 157);
+      cell('Beta digabung', 72, 179);
+      cell('20', 350, 179);
+
+      page.drawImage(picture, { x: 72, y: H - 320, width: 120, height: 80 });
+    } else {
+      page.drawText('Halaman dua', { x: 72, y: H - 90, size: 11, font: regular });
+    }
+  }
+
+  const bytes = await pdf.save();
+  const loaded = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+
+  const { document, model } = await convertPdfToDocx(loaded, [1, 2], {
+    pdfjsOps: pdfjs.OPS,
+    docx,
+    canvas: {
+      create: (width, height) => createCanvas(width, height),
+      encode: async (canvas, format) => new Uint8Array(await canvas.encode(format === 'png' ? 'png' : 'jpeg')),
+    },
+  });
+
+  const files = unzipSync(new Uint8Array(await docx.Packer.toBuffer(document)));
+  const body = strFromU8(files['word/document.xml']);
+  const footers = Object.keys(files)
+    .filter((name) => /^word\/footer\d*\.xml$/.test(name))
+    .map((name) => strFromU8(files[name]))
+    .join('');
+
+  checkThat('tabel bergaris menjadi tabel Word', body.includes('<w:tbl>'));
+  checkThat('sel gabungan dipertahankan (gridSpan)', /<w:gridSpan w:val="2"\/>/.test(body));
+  checkThat('arsiran sel terbawa', /w:fill="ACB9CA"/i.test(body));
+  checkThat('isi sel ada di tabel', body.includes('Alpha') && body.includes('Beta digabung'));
+  checkThat('judul tetap tebal', /<w:b\/>/.test(body) && body.includes('BAB I PENDAHULUAN'));
+  checkThat('gambar ikut tersisip', Object.keys(files).some((name) => name.startsWith('word/media/')));
+  checkThat('footer berulang jadi footer Word dengan nomor halaman', footers.includes('Laporan uji') && /PAGE/.test(footers));
+  checkThat('footer tidak terduplikasi di badan dokumen', !body.includes('Laporan uji'));
+  checkThat('halaman 2 dimulai di halaman baru', body.includes('<w:pageBreakBefore/>'));
+  check('margin kiri terbaca dari halaman', model.margins.left, 72);
+}
+
 console.log(
   failures === 0 ? '\nSemua pemeriksaan lolos.\n' : `\n${failures} pemeriksaan GAGAL.\n`,
 );

@@ -1,7 +1,8 @@
 'use client';
 
 import { NusaError } from '@/lib/errors';
-import { extractParagraphs, extractTable, pagesToImages } from '@/lib/pdf/render';
+import { extractParagraphs, extractTable, getLoadedDocument, pagesToImages } from '@/lib/pdf/render';
+import { convertPdfToDocx, type CanvasBackend } from './pdf-to-docx';
 import {
   A4_LANDSCAPE,
   A4_PORTRAIT,
@@ -20,9 +21,12 @@ import { readWorkbook, writeWorkbook, type Sheet } from './xlsx';
  * gives higher layout fidelity but breaks the product's central promise that
  * files are not uploaded, and needs infrastructure that does not exist here.
  *
- * What these deliver is **content fidelity, not layout fidelity**: text,
- * structure, and tabular data survive; original pagination, fonts, and
- * decorative styling do not. The UI states that plainly rather than implying a
+ * PDF to Word is the exception that keeps layout as well: it rebuilds the
+ * page from the PDF's drawing operations (lib/office/pdf-to-docx), so fonts,
+ * spacing, tables, pictures, and pagination come across. The other directions
+ * deliver **content fidelity, not layout fidelity**: text, structure, and
+ * tabular data survive; original pagination, fonts, and decorative styling do
+ * not. The UI states each tool's limit plainly rather than implying a
  * pixel-perfect clone (PRD risk R1).
  *
  * Each heavy library is imported dynamically so it only downloads when the
@@ -36,116 +40,57 @@ export type Progress = (done: number, total: number, label?: string) => void;
    ========================================================================== */
 
 /**
- * Decides whether a page is laid out as a table.
- *
- * `extractTable` returns a grid for every page, but on prose that grid is one
- * wide column. Requiring several rows that genuinely span multiple columns
- * keeps ordinary paragraphs from being forced into a table, which reads far
- * worse than plain text.
+ * Canvas backend for the figure rasteriser: plain <canvas>, encoded in-page.
+ * Nothing here touches the network.
  */
-function looksTabular(rows: string[][]): boolean {
-  const multiColumn = rows.filter(
-    (row) => row.filter((cell) => cell.trim() !== '').length >= 2,
-  );
-  return multiColumn.length >= 3 && multiColumn.length >= rows.length * 0.5;
-}
+const browserCanvas: CanvasBackend = {
+  create(width, height) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  },
+  encode(canvas, format, quality) {
+    return new Promise((resolve, reject) => {
+      (canvas as HTMLCanvasElement).toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new NusaError('E_OOM', 'Gagal menyalin gambar halaman'));
+            return;
+          }
+          void blob.arrayBuffer().then((buffer) => resolve(new Uint8Array(buffer)), reject);
+        },
+        format === 'png' ? 'image/png' : 'image/jpeg',
+        quality,
+      );
+    });
+  },
+};
 
+/**
+ * Rebuilds the PDF as an editable Word document that keeps its layout: real
+ * paragraphs with their fonts, spacing, indents and alignment; real tables
+ * with merged cells, borders and shading; pictures where they were; and the
+ * repeating footer as a Word footer. See lib/office/pdf-to-docx for how.
+ */
 export async function pdfToWord(
   docId: string,
   pageNumbers: number[],
   onProgress?: Progress,
+  signal?: AbortSignal,
 ): Promise<Blob> {
-  const { Document, Packer, Paragraph, TextRun, PageBreak, Table, TableRow, TableCell, WidthType } =
-    await import('docx');
+  const [docx, { doc, OPS }] = await Promise.all([import('docx'), getLoadedDocument(docId)]);
 
-  // Paragraphs and tables both sit at section level, so the array holds either.
-  const children: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = [];
-
-  for (const [index, pageNumber] of pageNumbers.entries()) {
-    onProgress?.(index, pageNumbers.length, `Membaca halaman ${pageNumber}…`);
-
-    if (index > 0) {
-      children.push(new Paragraph({ children: [new PageBreak()] }));
-    }
-
-    const grid = await extractTable(docId, pageNumber);
-    const meaningful = grid.filter((row) => row.some((cell) => cell.trim() !== ''));
-
-    // A real Word table keeps the columns aligned and editable as a table,
-    // instead of collapsing into a run-on paragraph.
-    if (looksTabular(meaningful)) {
-      const columnCount = Math.max(...meaningful.map((row) => row.length));
-
-      children.push(
-        new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          rows: meaningful.map(
-            (row, rowIndex) =>
-              new TableRow({
-                children: Array.from({ length: columnCount }, (_, column) =>
-                  new TableCell({
-                    children: [
-                      new Paragraph({
-                        children: [
-                          new TextRun({
-                            text: row[column] ?? '',
-                            font: 'Calibri',
-                            size: 20,
-                            bold: rowIndex === 0,
-                          }),
-                        ],
-                      }),
-                    ],
-                  }),
-                ),
-              }),
-          ),
-        }),
-      );
-
-      children.push(new Paragraph({ text: '' }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      continue;
-    }
-
-    const paragraphs = await extractParagraphs(docId, pageNumber);
-
-    if (paragraphs.length === 0) {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: `(Halaman ${pageNumber} tidak memuat teks yang dapat dibaca)`,
-              italics: true,
-              color: '696969',
-            }),
-          ],
-        }),
-      );
-      continue;
-    }
-
-    for (const text of paragraphs) {
-      children.push(
-        new Paragraph({
-          children: [new TextRun({ text, font: 'Calibri', size: 22 })], // half-points
-          spacing: { after: 160 },
-        }),
-      );
-    }
-
-    // Yield so the progress bar repaints on long documents.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
-  onProgress?.(pageNumbers.length, pageNumbers.length, 'Menyusun dokumen Word…');
-
-  const document = new Document({
-    creator: 'NusaPDF',
-    sections: [{ properties: {}, children }],
+  const { document } = await convertPdfToDocx(doc, pageNumbers, {
+    pdfjsOps: OPS,
+    docx,
+    canvas: browserCanvas,
+    onProgress,
+    signal,
   });
 
-  return Packer.toBlob(document);
+  onProgress?.(1, 1, 'Menyusun dokumen Word…');
+  return docx.Packer.toBlob(document);
 }
 
 /* ==========================================================================

@@ -55,7 +55,8 @@ Tanpa `.env.local`, aplikasi tetap berjalan dan AI PDF menampilkan pemberitahuan
 | `npm run verify` | Jalankan seluruh pemeriksaan di bawah |
 | `npm run verify:pdf` | Uji mesin PDF terhadap fixture buatan |
 | `npm run verify:ai` | Uji ekstraksi teks, pemotongan, dan failover kunci Gemini |
-| `npm run verify:office` | Uji baca/tulis .xlsx & .pptx dan mesin tata letak PDF |
+| `npm run verify:office` | Uji baca/tulis .xlsx & .pptx, mesin tata letak PDF, dan rekonstruksi PDF → Word |
+| `npm run convert:word -- <berkas.pdf>` | Jalankan PDF → Word dari terminal, dengan kode yang sama dengan peramban |
 
 ---
 
@@ -81,9 +82,32 @@ Pemrosesan bersifat **hybrid**, dan pembagiannya adalah keputusan produk, bukan 
 
 ### Konversi Office
 
-Berjalan di peramban, bukan server. Ini keputusan yang punya harga, dan harganya **fidelitas isi, bukan fidelitas tata letak**: teks, daftar, dan tabel berpindah; jenis huruf, posisi gambar, header/footer, dan penomoran halaman asli tidak direkonstruksi. Alternatifnya — LibreOffice dalam kontainer atau API konversi berbayar — memberi kemiripan piksel tetapi membatalkan janji utama produk dan menuntut infrastruktur yang belum ada. Setiap alat konversi menyatakan batas itu di panelnya sebelum tombol ditekan (PRD risiko R1).
+Berjalan di peramban, bukan server. Untuk Word/PowerPoint/Excel → PDF dan PDF → Excel, ini keputusan yang punya harga, dan harganya **fidelitas isi, bukan fidelitas tata letak**: teks, daftar, dan tabel berpindah; jenis huruf, posisi gambar, header/footer, dan penomoran halaman asli tidak direkonstruksi. Alternatifnya — LibreOffice dalam kontainer atau API konversi berbayar — memberi kemiripan piksel tetapi membatalkan janji utama produk dan menuntut infrastruktur yang belum ada. Setiap alat konversi menyatakan batas itu di panelnya sebelum tombol ditekan (PRD risiko R1).
 
 Satu pengecualian: **PDF → PowerPoint** merender tiap halaman sebagai gambar slide, jadi tampilannya justru terjaga sempurna — dengan konsekuensi teksnya tidak bisa diedit.
+
+### PDF → Word
+
+PDF → Word adalah pengecualian kedua, dan satu-satunya yang menjaga **tata letak sekaligus kemampuan edit**. PDF tidak menyimpan paragraf, tabel, atau daftar — hanya glif, garis, dan gambar pada koordinat. `lib/office/pdf-to-docx/` merekonstruksi strukturnya dari operator gambar PDF itu sendiri:
+
+1. **`lib/pdf/page-content.ts`** membaca daftar operator pdf.js dengan mesin status yang sama dengan renderer (save/restore, transform, clip): teks beserta font aslinya (`Arial-BoldMT` → Arial tebal), warna, garis dan bidang vektor, serta posisi gambar.
+2. **`layout.ts`** mengenali footer/header yang berulang di tiap halaman, membangun ulang tabel dari garis tepinya (sel gabungan, batas per sisi, arsiran), mengelompokkan gambar dan diagram, memisahkan konten berdampingan (XY-cut), lalu membentuk paragraf: perataan, indentasi, daftar dengan indentasi gantung, daftar isi bertitik, dan spasi baris terukur.
+3. **`write-docx.ts`** menulis .docx yang menempatkan tiap elemen di posisinya. Word tidak punya posisi absolut untuk teks mengalir, jadi posisi dicapai lewat spasi baris "exactly" dan jarak antarparagraf. Konstanta di sana **diukur terhadap Word**, bukan diambil dari spesifikasi — misalnya baseline berada di 0,8 × tinggi baris, dan space-before dibuang setelah page break.
+
+Tiga keputusan yang tidak kelihatan dari hasilnya:
+
+- **Lebar kolom teks harus tepat sampai sepersekian poin.** Terukur: pada lebar 451,2pt Word memotong baris persis seperti PDF, pada 451,64pt satu kata tambahan naik dan seluruh paragraf mengalir ulang. Karena itu margin diambil dari tepi baris rata kanan-kiri yang paling umum, lalu dibulatkan ke satuan yang dipakai Word (0,1 cm / 0,05 in).
+- **Potongan halaman mengikuti PDF, bukan Word.** Paragraf atau tabel yang terpotong di akhir halaman tetap dua bagian. Menyambungnya menyerahkan paginasi ke Word, yang widow control dan kapasitas halamannya tidak sama dengan aplikasi pembuat PDF — potongannya bergeser satu baris dan semua halaman sesudahnya ikut bergeser.
+- **Gambar dipotong dari render halaman, bukan diekstrak dari stream-nya.** Hasilnya persis seperti yang dilihat pembaca: mask, ruang warna, clipping, gambar yang saling menumpuk, dan diagram vektor beserta labelnya semuanya benar.
+
+Batas yang dinyatakan di panel alat: halaman yang didominasi gambar dengan teks di atasnya (sampul) dibawa sebagai satu gambar penuh, demikian pula diagram dan teks yang menempel di atas gambar; PDF hasil pindai belum punya lapisan teks untuk dibaca.
+
+Untuk memeriksa dokumen nyata tanpa membuka UI — jalur kodenya sama persis dengan yang dipakai peramban:
+
+```bash
+npm run convert:word -- laporan.pdf            # -> laporan.docx
+npm run convert:word -- laporan.pdf --pages 3-6
+```
 
 Pustaka: `mammoth` (baca .docx), `docx` (tulis .docx), `pptxgenjs` (tulis .pptx). Pembaca `.xlsx` dan `.pptx` ditulis sendiri di `lib/office/` di atas `fflate` — build npm SheetJS membawa advisory prototype-pollution **tanpa perbaikan**, dan itu tidak bisa diterima ketika input-nya berkas yang diseret pengguna. Seluruh pustaka berat diimpor dinamis agar hanya terunduh saat alatnya dibuka.
 
@@ -154,8 +178,9 @@ app/
 components/
   shell/ home/ tools/ ai/ content/ ui/
 lib/
-  pdf/                worker + render + ekstraksi teks berposisi
+  pdf/                worker + render + ekstraksi teks berposisi + page-content
   office/             ooxml, xlsx, pptx, pdf-writer, convert
+  office/pdf-to-docx/ PDF → Word: tata letak, tabel, gambar, footer
   ai/                 gemini, embed, retrieve, kuota, key-pool
   supabase/           client, server, config
   store/queue.ts      antrean berkas — HANYA di memori

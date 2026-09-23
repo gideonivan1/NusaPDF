@@ -35,9 +35,9 @@ const TARGETS: Record<
     mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     runLabel: 'Ubah jadi Word',
     expectation:
-      'Teks tiap halaman disusun ulang menjadi paragraf yang siap diedit. Halaman yang tata letaknya berbentuk tabel dikenali dan dibuat sebagai tabel Word sungguhan.',
+      'Setiap halaman disusun ulang di Word mengikuti tata letak aslinya: jenis dan ukuran huruf, spasi, perataan, daftar bernomor, tabel lengkap dengan sel gabungan dan arsiran, gambar pada posisinya, serta footer dan nomor halaman. Teksnya tetap bisa diedit.',
     caveat:
-      'Gambar di dalam PDF belum ikut terbawa, dan tata letak asli — kolom, kotak teks, posisi gambar — tidak direkonstruksi.',
+      'Yang dibawa sebagai gambar, bukan teks: halaman yang didominasi gambar seperti sampul, diagram, dan tulisan yang menempel di atas gambar. PDF hasil pindai (scan) belum dapat dibaca teksnya.',
   },
   powerpoint: {
     slug: 'pdf-to-powerpoint',
@@ -79,7 +79,7 @@ export function PdfToOfficeTool({ target }: { target: Target }) {
   const canRun = Boolean(file) && selected.length > 0 && state.phase !== 'running';
 
   const start = () =>
-    void run(async (report) => {
+    void run(async (report, signal) => {
       if (!file) throw new NusaError('E_UNKNOWN', 'Tidak ada dokumen');
 
       const pageNumbers = selected.map((page) => page.index + 1);
@@ -88,7 +88,7 @@ export function PdfToOfficeTool({ target }: { target: Target }) {
 
       const blob =
         target === 'word'
-          ? await pdfToWord(file.localId, pageNumbers, progress)
+          ? await pdfToWord(file.localId, pageNumbers, progress, signal)
           : target === 'powerpoint'
             ? await pdfToPowerpoint(file.localId, pageNumbers, slideMode, progress)
             : await pdfToExcel(file.localId, pageNumbers, progress);
