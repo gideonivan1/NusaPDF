@@ -1,5 +1,5 @@
 /**
- * Fonts for Word to PDF.
+ * Fonts for Word and PowerPoint to PDF.
  *
  * Line breaks and page breaks depend on glyph widths to a fraction of a
  * point, so the output can only match Word if the text is measured — and
@@ -14,9 +14,16 @@
  *
  * Verified glyph by glyph against the Windows originals. Files load on first
  * use only, and pdf-lib subsets them into the PDF.
+ *
+ * Some fonts have no open twin. For those NusaPDF carries only the original's
+ * advance widths (metrics.ts): text is measured with them and drawn with a
+ * look-alike stretched to match, so it breaks and aligns like the original.
+ *
+ *   Gill Sans MT     → Carlito, at Gill Sans widths
  */
 
 import type { PDFDocument, PDFFont } from 'pdf-lib';
+import { GILL_SANS, type WidthTable } from './metrics';
 
 export type FontLoader = (file: string) => Promise<Uint8Array>;
 
@@ -57,7 +64,21 @@ const FAMILIES: Record<string, Family> = {
   calibri: CARLITO,
   'calibri light': CARLITO,
   carlito: CARLITO,
+  'gill sans mt': CARLITO,
+  'gill sans': CARLITO,
 };
+
+/** Width tables of fonts drawn by a look-alike, by family. */
+const PROXIED: Record<string, Record<'regular' | 'bold' | 'italic' | 'boldItalic', WidthTable>> = {
+  'gill sans mt': GILL_SANS,
+  'gill sans': GILL_SANS,
+};
+
+export function widthTable(name: string | undefined, bold: boolean, italic: boolean): WidthTable | undefined {
+  const family = PROXIED[(name ?? '').trim().toLowerCase()];
+  if (!family) return undefined;
+  return family[bold && italic ? 'boldItalic' : bold ? 'bold' : italic ? 'italic' : 'regular'];
+}
 
 /** Symbol-font code points Word uses for bullets, and what they look like. */
 const SYMBOL_MAP: Record<number, string> = {
@@ -104,13 +125,26 @@ export function fileFor(name: string | undefined, bold: boolean, italic: boolean
   return bold && italic ? family.boldItalic : bold ? family.bold : italic ? family.italic : family.regular;
 }
 
+/** Wingdings 2 lays its glyphs out differently from Wingdings. */
+const WINGDINGS2_MAP: Record<number, string> = {
+  0xf097: '•',
+  0xf098: '•',
+  0xf0a1: '■',
+  0xf0a2: '■',
+  0xf0a3: '■',
+  0xf050: '✓',
+  0xf0f0: '■',
+};
+
 /** Maps private-use symbol code points to real characters. */
 export function mapSymbols(text: string, fontName: string | undefined): string {
   const symbolic = /symbol|wingdings|webdings/i.test(fontName ?? '');
+  const wingdings2 = /wingdings\s*2/i.test(fontName ?? '');
   let out = '';
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;
-    if (code >= 0xf000 && code <= 0xf0ff) out += SYMBOL_MAP[code] ?? (symbolic ? '•' : String.fromCharCode(code - 0xf000));
+    if (wingdings2 && code >= 0xf000 && code <= 0xf0ff) out += WINGDINGS2_MAP[code] ?? '▪';
+    else if (code >= 0xf000 && code <= 0xf0ff) out += SYMBOL_MAP[code] ?? (symbolic ? '•' : String.fromCharCode(code - 0xf000));
     else out += character;
   }
   return out;
@@ -131,6 +165,7 @@ interface FontkitFont {
   'OS/2'?: { winAscent?: number; winDescent?: number };
   hasGlyphForCodePoint(code: number): boolean;
   glyphForCodePoint(code: number): FontkitGlyph;
+  layout(text: string, features?: string[]): { positions: { xAdvance: number }[]; glyphs: FontkitGlyph[] };
 }
 
 interface Fontkit {
@@ -145,15 +180,36 @@ export class Face {
   readonly underlinePosition: number;
   readonly underlineThickness: number;
   private readonly widths = new Map<number, number>();
+  /** The original font's advance widths, per em, when a look-alike draws it. */
+  private readonly table?: Map<number, number>;
+  /** Drawn by a look-alike and stretched to the original's widths. */
+  readonly proxied: boolean;
+  /** Kerning adjustments per em, by character pair. */
+  private readonly kerns = new Map<string, number>();
+  private readonly tableKerning: boolean;
 
   readonly file: string;
   readonly pdf: PDFFont;
   private readonly font: FontkitFont;
 
-  constructor(file: string, pdf: PDFFont, font: FontkitFont, metrics?: { ascent: number; descent: number }) {
+  constructor(file: string, pdf: PDFFont, font: FontkitFont, metrics?: { ascent: number; descent: number }, table?: WidthTable) {
     this.file = file;
     this.pdf = pdf;
     this.font = font;
+    this.proxied = table !== undefined;
+    if (table) {
+      this.table = new Map();
+      for (const pair of table.widths.split(' ')) {
+        const [code, width] = pair.split(':');
+        this.table.set(parseInt(code, 36), parseInt(width, 36) / table.unitsPerEm);
+      }
+      for (const entry of table.kerning ? table.kerning.split(' ') : []) {
+        const [left, right, value] = entry.split(':');
+        this.kerns.set(String.fromCodePoint(parseInt(left, 36)) + String.fromCodePoint(parseInt(right, 36)), parseInt(value, 36) / table.unitsPerEm);
+      }
+      metrics = { ascent: table.ascent, descent: table.descent };
+    }
+    this.tableKerning = table !== undefined;
     const unit = font.unitsPerEm;
     const winAscent = font['OS/2']?.winAscent;
     const winDescent = font['OS/2']?.winDescent;
@@ -176,8 +232,49 @@ export class Face {
     return this.font.hasGlyphForCodePoint(code);
   }
 
-  /** Advance width in points, without kerning — exactly what the PDF will show. */
-  width(text: string, size: number): number {
+  /** Kerning between two characters, per em (negative: closer). */
+  kern(left: string, right: string): number {
+    const pair = left + right;
+    let value = this.kerns.get(pair);
+    if (value === undefined) {
+      value = 0;
+      if (!this.tableKerning) {
+        try {
+          const run = this.font.layout(pair, ['kern']);
+          if (run.glyphs.length === 2) value = (run.positions[0].xAdvance - run.glyphs[0].advanceWidth) / this.font.unitsPerEm;
+        } catch {
+          value = 0;
+        }
+      }
+      this.kerns.set(pair, value);
+    }
+    return value;
+  }
+
+  /**
+   * Advance width in points. Without kerning — what Word does, and what the
+   * PDF shows — unless `kerning`, as PowerPoint sets text above a size.
+   */
+  width(text: string, size: number, kerning = false): number {
+    if (kerning) {
+      const characters = [...text];
+      let adjust = 0;
+      for (let index = 1; index < characters.length; index++) adjust += this.kern(characters[index - 1], characters[index]);
+      return this.width(text, size) + adjust * size;
+    }
+    if (this.table) {
+      let ems = 0;
+      for (const character of text) {
+        const code = character.codePointAt(0) ?? 0;
+        ems += this.table.get(code) ?? this.drawnWidth(character, 1);
+      }
+      return ems * size;
+    }
+    return this.drawnWidth(text, size);
+  }
+
+  /** Width of the glyphs actually drawn: differs from width() for a look-alike. */
+  drawnWidth(text: string, size: number): number {
     let units = 0;
     for (const character of text) {
       const code = character.codePointAt(0) ?? 0;
@@ -210,7 +307,8 @@ export class FontSet {
   get(name: string | undefined, bold: boolean, italic: boolean): Promise<Face> {
     const file = fileFor(name, bold, italic);
     const metrics = symbolMetrics(name);
-    const key = metrics ? file + '|' + (name ?? '').trim().toLowerCase() : file;
+    const table = widthTable(name, bold, italic);
+    const key = metrics || table ? file + '|' + (name ?? '').trim().toLowerCase() : file;
     let face = this.faces.get(key);
     if (!face) {
       face = (async () => {
@@ -232,7 +330,7 @@ export class FontSet {
           this.files.set(file, loaded);
         }
         const { font, pdf } = await loaded;
-        return new Face(file, pdf, font, metrics);
+        return new Face(file, pdf, font, metrics, table);
       })();
       this.faces.set(key, face);
     }

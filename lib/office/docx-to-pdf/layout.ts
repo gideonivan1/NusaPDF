@@ -9,8 +9,9 @@
  * Every y coordinate is top-down in points, like the page Word shows.
  */
 
+import type { LineCapStyle } from 'pdf-lib';
 import type { Anchor, Block, Cell, DocxDocument, Inline, Paragraph, Section, Shape, ShapeBox, Table } from './document';
-import { Face, fileFor, mapSymbols, symbolMetrics } from './fonts';
+import { Face, fileFor, mapSymbols, symbolMetrics, widthTable } from './fonts';
 import { formatNumber, type BorderLine, type CellMargins, type ParaProps, type RunProps, type TabStop } from './styles';
 
 /* ==========================================================================
@@ -18,7 +19,18 @@ import { formatNumber, type BorderLine, type CellMargins, type ParaProps, type R
    ========================================================================== */
 
 export type DrawOp =
-  | { kind: 'text'; x: number; y: number; text: string; face: Face; size: number; color: string }
+  | {
+      kind: 'text';
+      x: number;
+      y: number;
+      text: string;
+      face: Face;
+      size: number;
+      color: string;
+      opacity?: number;
+      /** Width the text must span (kerned text); the glyphs are stretched to it. */
+      width?: number;
+    }
   | {
       kind: 'rect';
       x: number;
@@ -32,7 +44,7 @@ export type DrawOp =
       strokeOpacity?: number;
     }
   | { kind: 'line'; x1: number; y1: number; x2: number; y2: number; color: string; width: number; dash?: number[] }
-  | { kind: 'image'; x: number; y: number; w: number; h: number; image: string; crop?: { left: number; top: number; right: number; bottom: number } }
+  | { kind: 'image'; x: number; y: number; w: number; h: number; image: string; crop?: { left: number; top: number; right: number; bottom: number }; opacity?: number }
   | {
       kind: 'path';
       d: string;
@@ -41,6 +53,8 @@ export type DrawOp =
       stroke?: string;
       strokeWidth?: number;
       strokeOpacity?: number;
+      dash?: number[];
+      cap?: LineCapStyle;
     };
 
 /** Stacking: behind-text objects, then the text layer, then objects in front. */
@@ -173,7 +187,8 @@ function fontName(props: RunProps, doc: DocxDocument): string {
 export function faceKey(props: RunProps, doc: DocxDocument): string {
   const name = fontName(props, doc);
   const file = fileFor(name, Boolean(props.bold), Boolean(props.italic));
-  return symbolMetrics(name) ? file + '|' + name.trim().toLowerCase() : file;
+  const special = symbolMetrics(name) || widthTable(name, Boolean(props.bold), Boolean(props.italic));
+  return special ? file + '|' + name.trim().toLowerCase() : file;
 }
 
 /* ==========================================================================

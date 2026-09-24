@@ -109,16 +109,18 @@ export default function BantuanPage() {
 
       <h3>Word, PowerPoint, dan Excel ke PDF</h3>
       <p>
-        Jatuhkan satu berkas .docx, .pptx, atau .xlsx — beberapa sekaligus juga bisa. Isinya
-        dibaca lalu ditata ulang ke halaman PDF: dokumen Word menjadi A4 tegak, spreadsheet
-        menjadi lanskap dengan lebar kolom mengikuti isinya, dan presentasi menjadi satu
-        halaman per slide mengikuti rasio deck aslinya.
+        Jatuhkan satu berkas .docx, .pptx, atau .xlsx — beberapa sekaligus juga bisa.
       </p>
       <p>
-        Hasilnya <em>ditata ulang</em>, bukan disalin persis. Jenis huruf, warna, gambar,
-        grafik, dan header/footer asli tidak ikut terbawa. Bila Anda memerlukan kemiripan
-        piksel, gunakan fitur “Save as PDF” di aplikasi Office Anda — itu punya akses ke
-        mesin tata letak aslinya, yang tidak dimiliki peramban.
+        <strong>Word</strong> dan <strong>PowerPoint</strong> digambar ulang seperti di
+        aplikasinya: ukuran halaman atau slide, huruf, spasi, penomoran, tabel, gambar, bentuk,
+        serta header/footer. Huruf Office diganti huruf terbuka yang lebarnya sama, sehingga
+        baris dan halaman terpotong di tempat yang sama. Grafik bawaan (chart), SmartArt, dan
+        persamaan belum digambar.
+      </p>
+      <p>
+        <strong>Excel</strong> masih ditata ulang, bukan disalin persis: setiap lembar menjadi
+        tabel di halaman lanskap. Warna, format angka, dan grafik tidak ikut terbawa.
       </p>
       <p>
         Format lama .doc, .ppt, dan .xls belum didukung karena wadah berkasnya berbeda sama

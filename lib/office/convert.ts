@@ -8,9 +8,7 @@ import {
   renderBlocksToPdf,
   sanitise,
   type Block,
-  type PageSetup,
 } from './pdf-writer';
-import { readDeck } from './pptx';
 import { readWorkbook, writeWorkbook, type Sheet } from './xlsx';
 
 /**
@@ -20,10 +18,12 @@ import { readWorkbook, writeWorkbook, type Sheet } from './xlsx';
  * gives higher layout fidelity but breaks the product's central promise that
  * files are not uploaded, and needs infrastructure that does not exist here.
  *
- * PDF to Word and Word to PDF keep the layout as well as the content. PDF to
- * Word rebuilds pages from the PDF's drawing operations (lib/office/pdf-to-docx);
- * Word to PDF typesets the document the way Word does, with metric-identical
- * open fonts (lib/office/docx-to-pdf). The remaining directions deliver
+ * PDF to Word, Word to PDF, and PowerPoint to PDF keep the layout as well as
+ * the content. PDF to Word rebuilds pages from the PDF's drawing operations
+ * (lib/office/pdf-to-docx); Word to PDF typesets the document the way Word
+ * does, with metric-identical open fonts (lib/office/docx-to-pdf); PowerPoint
+ * to PDF draws each slide through its master and layout with PowerPoint's
+ * text rules (lib/office/pptx-to-pdf). The remaining directions deliver
  * **content fidelity, not layout fidelity**: text, structure, and tabular data
  * survive; original pagination, fonts, and decorative styling do not. The UI
  * states each tool's limit plainly rather than implying a pixel-perfect clone
@@ -285,6 +285,52 @@ async function imageToPng(image: { data: Uint8Array; mime: string }): Promise<{ 
 }
 
 /**
+ * Scales a picture much sharper than it is shown down to the target size,
+ * as Office's own PDF export does: pictures with transparency stay PNG,
+ * opaque ones become JPEG. Null keeps the original.
+ */
+async function resampleImage(image: { data: Uint8Array; mime: string }, width: number, height: number): Promise<{ data: Uint8Array; type: 'png' | 'jpg' } | null> {
+  try {
+    const bitmap = await createImageBitmap(new Blob([image.data as BlobPart], { type: image.mime }));
+    // Keep at least the target in both directions.
+    let scale = Math.min(1, Math.max(width / bitmap.width, height / bitmap.height));
+    if (scale >= 0.95) scale = 1;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) {
+      bitmap.close();
+      return null;
+    }
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let opaque = true;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] < 255) {
+        opaque = false;
+        break;
+      }
+    }
+    // Nothing to gain from re-encoding a transparent picture at its own size.
+    if (!opaque && scale === 1) {
+      canvas.width = 0;
+      canvas.height = 0;
+      return null;
+    }
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, opaque ? 'image/jpeg' : 'image/png', 0.9));
+    canvas.width = 0;
+    canvas.height = 0;
+    if (!blob || blob.size >= image.data.length) return null;
+    return { data: new Uint8Array(await blob.arrayBuffer()), type: opaque ? 'jpg' : 'png' };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Typesets the document the way Word does and draws it to PDF: its fonts
  * (through metric-identical open substitutes), spacing, numbering, tables,
  * pictures, shapes, and footers. See lib/office/docx-to-pdf for how.
@@ -297,6 +343,7 @@ export async function wordToPdf(file: File, onProgress?: Progress): Promise<Blob
     bytes = await convertDocxToPdf(await file.arrayBuffer(), {
       loadFont: fetchFont,
       convertImage: imageToPng,
+      resampleImage,
       onProgress,
     });
   } catch (error) {
@@ -311,47 +358,27 @@ export async function wordToPdf(file: File, onProgress?: Progress): Promise<Blob
    PowerPoint -> PDF
    ========================================================================== */
 
+/**
+ * Draws every slide the way PowerPoint shows it: the master and layout
+ * behind it, shapes, pictures, tables, and text set with PowerPoint's own
+ * line breaking and spacing. See lib/office/pptx-to-pdf for how.
+ */
 export async function powerpointToPdf(file: File, onProgress?: Progress): Promise<Blob> {
-  onProgress?.(0, 2, 'Membaca presentasi…');
+  const { convertPptxToPdf } = await import('./pptx-to-pdf');
 
-  const deck = readDeck(await file.arrayBuffer());
-  const blocks: Block[] = [];
+  let bytes: Uint8Array;
+  try {
+    bytes = await convertPptxToPdf(await file.arrayBuffer(), {
+      loadFont: fetchFont,
+      convertImage: imageToPng,
+      resampleImage,
+      onProgress,
+    });
+  } catch (error) {
+    if (error instanceof NusaError) throw error;
+    throw new NusaError('E_CORRUPT', error instanceof Error ? error.message : 'Presentasi PowerPoint tidak dapat dibaca');
+  }
 
-  deck.slides.forEach((slide, index) => {
-    if (index > 0) blocks.push({ type: 'pagebreak' });
-
-    blocks.push({ type: 'heading', level: 3, text: `Slide ${slide.index}` });
-
-    if (slide.shapes.length === 0) {
-      blocks.push({ type: 'paragraph', text: '(slide tanpa teks)' });
-      return;
-    }
-
-    // The topmost shape is the title in virtually every deck layout.
-    const [title, ...rest] = slide.shapes;
-    blocks.push({ type: 'heading', level: 1, text: title.lines.join(' ') });
-
-    for (const shape of rest) {
-      if (shape.lines.length > 1) {
-        blocks.push({ type: 'list', ordered: false, items: shape.lines });
-      } else {
-        blocks.push({ type: 'paragraph', text: shape.lines[0] });
-      }
-    }
-  });
-
-  onProgress?.(1, 2, 'Menyusun PDF…');
-
-  // Match the deck's own aspect ratio so slides are not letterboxed.
-  const page: PageSetup = {
-    width: deck.widthPt,
-    height: deck.heightPt,
-    margin: Math.round(deck.widthPt * 0.06),
-  };
-
-  const bytes = await renderBlocksToPdf(blocks, { page, baseSize: 14, pageNumbers: true });
-
-  onProgress?.(2, 2);
   return new Blob([bytes as BlobPart], { type: 'application/pdf' });
 }
 

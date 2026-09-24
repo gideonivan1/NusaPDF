@@ -656,6 +656,66 @@ console.log('\nWord -> PDF — tata letak ala Word');
   checkThat('baris tabel yang tinggi terpecah ke halaman berikutnya', firstRowPage === 0 && lastRowPage > 0, `Baris 1 di hal. ${firstRowPage + 1}, Baris 90 di hal. ${lastRowPage + 1}`);
 }
 
+/* ======================================================== PowerPoint -> PDF */
+console.log('\nPowerPoint -> PDF — slide digambar seperti di PowerPoint');
+{
+  const PptxGenJS = (await import('pptxgenjs')).default;
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const { convertPptxToPdf } = await import('../lib/office/pptx-to-pdf/index.ts');
+
+  const swatch = createCanvas(60, 60);
+  swatch.getContext('2d').fillStyle = '#d04020';
+  swatch.getContext('2d').fillRect(0, 0, 60, 60);
+  const png = (await swatch.encode('png')).toString('base64');
+
+  const deck = new PptxGenJS();
+  deck.layout = 'LAYOUT_WIDE';
+  const first = deck.addSlide();
+  first.background = { color: '1A3260' };
+  first.addText('Judul Paparan', { x: 0.5, y: 0.5, w: 12, h: 1, fontFace: 'Arial', fontSize: 36, color: 'FFFFFF', align: 'center' });
+  first.addText(
+    [
+      { text: 'Butir pertama', options: { bullet: true } },
+      { text: 'Butir kedua', options: { bullet: true } },
+    ],
+    { x: 0.5, y: 2, w: 6, h: 2, fontFace: 'Arial', fontSize: 20, color: 'FFFFFF' },
+  );
+  first.addShape(deck.ShapeType.roundRect, { x: 7, y: 2, w: 3, h: 1.5, fill: { color: '4590B8' }, line: { color: 'FFFFFF', width: 1 } });
+  first.addImage({ data: `image/png;base64,${png}`, x: 11, y: 2, w: 1.5, h: 1.5 });
+  const second = deck.addSlide();
+  second.addTable(
+    [
+      [{ text: 'Kolom A' }, { text: 'Kolom B' }],
+      [{ text: 'Alpha' }, { text: 'Beta' }],
+    ],
+    { x: 1, y: 1, w: 8, fontFace: 'Calibri', fontSize: 14, border: { type: 'solid', pt: 1, color: '000000' } },
+  );
+  const pptx = await deck.write({ outputType: 'nodebuffer' });
+
+  const loaded = [];
+  const bytes = await convertPptxToPdf(pptx.buffer.slice(pptx.byteOffset, pptx.byteOffset + pptx.byteLength), {
+    loadFont: async (file) => {
+      loaded.push(file);
+      return new Uint8Array(readFileSync(new URL(`../public/fonts/${file}`, import.meta.url)));
+    },
+  });
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 1 });
+  const text = async (n) => (await (await pdf.getPage(n)).getTextContent()).items.map((item) => item.str).join(' ');
+
+  check('satu halaman per slide', pdf.numPages, 2);
+  check('ukuran halaman mengikuti slide 16:9', [Math.round(viewport.width), Math.round(viewport.height)], [960, 540]);
+  const slideText = await text(1);
+  checkThat('judul dan poin terbawa', slideText.includes('Judul Paparan') && slideText.includes('Butir pertama') && slideText.includes('Butir kedua'), slideText);
+  checkThat('isi tabel terbawa', /Kolom A/.test(await text(2)) && /Beta/.test(await text(2)));
+  const raw = Buffer.from(bytes).toString('latin1');
+  checkThat('gambar ikut tersisip', raw.includes('/Image'));
+  checkThat('latar dan bentuk digambar sebagai vektor', (await page.getOperatorList()).fnArray.length > 20);
+  checkThat('huruf pengganti bermetrik identik dipakai', loaded.includes('LiberationSans-Regular.ttf') && loaded.includes('Carlito-Regular.ttf'), loaded.join(', '));
+}
+
 console.log(
   failures === 0 ? '\nSemua pemeriksaan lolos.\n' : `\n${failures} pemeriksaan GAGAL.\n`,
 );

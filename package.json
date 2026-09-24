@@ -16,6 +16,7 @@
     "verify:office": "node --import ./scripts/register-ts.mjs --experimental-strip-types scripts/verify-office.mjs",
     "convert:word": "node --import ./scripts/register-ts.mjs --experimental-strip-types scripts/pdf-to-word.mjs",
     "convert:pdf": "node --import ./scripts/register-ts.mjs --experimental-strip-types scripts/word-to-pdf.mjs",
+    "convert:slides": "node --import ./scripts/register-ts.mjs --experimental-strip-types scripts/powerpoint-to-pdf.mjs",
     "doctor:ai": "node --import ./scripts/register-ts.mjs --conditions=react-server --experimental-strip-types scripts/doctor-ai.mjs",
     "repro:upload": "node scripts/repro-upload.mjs",
     "icons": "node scripts/make-icons.mjs",

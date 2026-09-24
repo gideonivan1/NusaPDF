@@ -12,15 +12,17 @@ import { PDFDocument } from 'pdf-lib';
 import { readDocx, type Block, type DocxDocument, type Shape } from './document';
 import { FontSet, type Face, type FontLoader } from './fonts';
 import { faceKey, Typesetter } from './layout';
-import { renderPages, type ImageConverter } from './render';
+import { renderPages, type ImageConverter, type ImageResampler } from './render';
 import type { RunProps } from './styles';
 
 export type { FontLoader } from './fonts';
-export type { ImageConverter } from './render';
+export type { ImageConverter, ImageResampler } from './render';
 
 export interface DocxToPdfOptions {
   loadFont: FontLoader;
   convertImage?: ImageConverter;
+  /** Scales oversized pictures down (the browser, through <canvas>). */
+  resampleImage?: ImageResampler;
   onProgress?: (done: number, total: number, label?: string) => void;
 }
 
@@ -88,7 +90,7 @@ export async function convertDocxToPdf(buffer: ArrayBuffer, options: DocxToPdfOp
   const pages = typesetter.finishPages();
 
   progress?.(3, 4, 'Menyusun PDF…');
-  await renderPages(pdf, pages, doc.images, options.convertImage);
+  await renderPages(pdf, pages, doc.images, options.convertImage, undefined, options.resampleImage);
 
   const bytes = await pdf.save({ useObjectStreams: true });
   progress?.(4, 4);

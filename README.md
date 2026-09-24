@@ -55,9 +55,10 @@ Tanpa `.env.local`, aplikasi tetap berjalan dan AI PDF menampilkan pemberitahuan
 | `npm run verify` | Jalankan seluruh pemeriksaan di bawah |
 | `npm run verify:pdf` | Uji mesin PDF terhadap fixture buatan |
 | `npm run verify:ai` | Uji ekstraksi teks, pemotongan, dan failover kunci Gemini |
-| `npm run verify:office` | Uji baca/tulis .xlsx & .pptx, mesin tata letak PDF, rekonstruksi PDF → Word, dan penataan Word → PDF |
+| `npm run verify:office` | Uji baca/tulis .xlsx & .pptx, mesin tata letak PDF, rekonstruksi PDF → Word, penataan Word → PDF, dan penggambaran PowerPoint → PDF |
 | `npm run convert:word -- <berkas.pdf>` | Jalankan PDF → Word dari terminal, dengan kode yang sama dengan peramban |
 | `npm run convert:pdf -- <berkas.docx>` | Jalankan Word → PDF dari terminal, dengan kode yang sama dengan peramban |
+| `npm run convert:slides -- <berkas.pptx>` | Jalankan PowerPoint → PDF dari terminal, dengan kode yang sama dengan peramban |
 
 ---
 
@@ -83,7 +84,7 @@ Pemrosesan bersifat **hybrid**, dan pembagiannya adalah keputusan produk, bukan 
 
 ### Konversi Office
 
-Berjalan di peramban, bukan server. Untuk PowerPoint/Excel → PDF dan PDF → Excel, ini keputusan yang punya harga, dan harganya **fidelitas isi, bukan fidelitas tata letak**: teks, daftar, dan tabel berpindah; jenis huruf, posisi gambar, header/footer, dan penomoran halaman asli tidak direkonstruksi. Alternatifnya — LibreOffice dalam kontainer atau API konversi berbayar — memberi kemiripan piksel tetapi membatalkan janji utama produk dan menuntut infrastruktur yang belum ada. Setiap alat konversi menyatakan batas itu di panelnya sebelum tombol ditekan (PRD risiko R1).
+Berjalan di peramban, bukan server. Untuk Excel → PDF dan PDF → Excel, ini keputusan yang punya harga, dan harganya **fidelitas isi, bukan fidelitas tata letak**: teks, daftar, dan tabel berpindah; jenis huruf, posisi gambar, header/footer, dan penomoran halaman asli tidak direkonstruksi. Alternatifnya — LibreOffice dalam kontainer atau API konversi berbayar — memberi kemiripan piksel tetapi membatalkan janji utama produk dan menuntut infrastruktur yang belum ada. Setiap alat konversi menyatakan batas itu di panelnya sebelum tombol ditekan (PRD risiko R1).
 
 Pengecualian pertama: **PDF → PowerPoint** merender tiap halaman sebagai gambar slide, jadi tampilannya justru terjaga sempurna — dengan konsekuensi teksnya tidak bisa diedit.
 
@@ -133,6 +134,30 @@ Diuji pada dua laporan nyata. Pada laporan 20 halaman, setiap baris jatuh di hal
 
 ```bash
 npm run convert:pdf -- laporan.docx            # -> laporan.pdf
+```
+
+### PowerPoint → PDF
+
+`lib/office/pptx-to-pdf/` menggambar setiap slide seperti PowerPoint menampilkannya, satu halaman PDF per slide pada ukuran slide aslinya.
+
+1. **`deck.ts`** membaca .pptx dan menyelesaikan seluruh rantai warisannya. Placeholder di slide mewarisi posisi, gaya teks, dan pengaturan badan teks dari placeholder layout, lalu dari master. Di bawahnya ada gaya teks master, gaya tabel, serta warna, huruf, dan gaya isian/garis dari tema. Keluarannya kotak mutlak, warna konkret, dan format teks yang sudah jadi.
+2. **`layout.ts`** menggambar bentuk dari geometri preset atau kustomnya, beserta rotasi, flip, dan panah. Gambar diberi crop, tabel tumbuh mengikuti isinya, dan teks ditata di dalam *text rectangle* bentuknya, misalnya menjauhi sudut persegi membulat atau berada di tengah belah ketupat.
+3. **`lib/office/emf.ts`** memutar ulang gambar EMF (tabel yang ditempel dari Excel/Word) sebagai garis, isian, dan teks vektor, karena peramban tidak bisa menampilkan EMF.
+
+Aturan teksnya **diukur dari ekspor PDF PowerPoint sendiri** dengan dek kalibrasi yang dibuat lewat PowerPoint:
+
+- Baris 100% setinggi 1,2 × ukuran huruf, untuk huruf apa pun. Baseline berada di proporsi ascent/(ascent+descent) huruf itu. Di atas 100% dan pada spasi tepat, baseline di ¾ tinggi baris.
+- Space-before paragraf pertama diabaikan. Spasi persen dihitung dari 1,2 × ukuran huruf.
+- Autofit memperkecil huruf ke **poin bulat** (18 pt × 92,5% digambar 17 pt), dan baris dipotong pada ukuran itu.
+- **Kerning** berlaku mulai ukuran ambang (`kern="1200"`), juga untuk pasangan dengan spasi. Kata yang melewati batas baris sampai 0,05 pt tetap muat. Terukur: 0,044 pt muat, 0,064 pt pindah baris.
+- Spasi tak-putus ikut direnggangkan saat rata kanan-kiri, tetapi melekat pada kata sebelumnya. Baris boleh putus setelah tanda hubung.
+
+Huruf Office yang tidak punya kembaran terbuka, seperti Gill Sans MT, diukur dengan **tabel lebar dan kerning aslinya** (`docx-to-pdf/metrics.ts`: hanya angka, tanpa bentuk glif). Hurufnya digambar dengan Carlito yang direntangkan kata per kata ke lebar itu, sehingga pemenggalan baris tetap sama.
+
+Diuji pada paparan nyata 29 slide yang penuh placeholder, tabel, konektor, gambar, dan EMF: 359 dari 359 baris teks jatuh di posisi yang sama dengan PDF buatan PowerPoint, dengan selisih rata-rata 0,2 pt. Gambar yang jauh lebih tajam dari ukuran tampilnya diperkecil ke sekitar 220 ppi di peramban, seperti ekspor Office sendiri. Yang belum digambar: animasi, video, chart, SmartArt, dan efek bayangan/pantulan. Gradien digambar sebagai warna rata-ratanya.
+
+```bash
+npm run convert:slides -- paparan.pptx         # -> paparan.pdf
 ```
 
 Pustaka: `docx` (tulis .docx), `@pdf-lib/fontkit` (menyematkan huruf TrueType), `pptxgenjs` (tulis .pptx). Pembaca `.xlsx` dan `.pptx` ditulis sendiri di `lib/office/` di atas `fflate` — build npm SheetJS membawa advisory prototype-pollution **tanpa perbaikan**, dan itu tidak bisa diterima ketika input-nya berkas yang diseret pengguna. Seluruh pustaka berat diimpor dinamis agar hanya terunduh saat alatnya dibuka.
@@ -208,11 +233,13 @@ lib/
   office/             ooxml, xlsx, pptx, pdf-writer, convert
   office/pdf-to-docx/ PDF → Word: tata letak, tabel, gambar, footer
   office/docx-to-pdf/ Word → PDF: gaya, pemecahan baris & halaman, gambar, bentuk
+  office/pptx-to-pdf/ PowerPoint → PDF: warisan master/layout, bentuk, tabel, teks
+  office/emf.ts       pemutar ulang gambar EMF (vektor dan teks)
   ai/                 gemini, embed, retrieve, kuota, key-pool
   supabase/           client, server, config
   store/queue.ts      antrean berkas — HANYA di memori
   hooks/ errors.ts tools.ts utils.ts
-public/fonts/         huruf bermetrik identik untuk Word → PDF (+ lisensi)
+public/fonts/         huruf bermetrik identik untuk Word/PowerPoint → PDF (+ lisensi)
 supabase/migrations/  skema + RLS + pgvector
 scripts/              copy worker pdf.js, 3 skrip verifikasi
 ```

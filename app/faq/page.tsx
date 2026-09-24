@@ -84,15 +84,15 @@ export default function FaqPage() {
 
       <h3>Seberapa mirip hasil konversi Office dengan aslinya?</h3>
       <p>
-        Yang berpindah adalah <strong>isinya</strong>, bukan tata letaknya. Teks, daftar,
-        dan tabel terbawa; jenis huruf, posisi gambar, header/footer, dan penomoran halaman
-        asli tidak direkonstruksi. Kami memilih ini secara sadar: mengejar kemiripan
-        piksel berarti mengirim dokumen Anda ke server, dan itu membatalkan alasan utama
-        NusaPDF ada.
+        Untuk Word dan PowerPoint ke PDF, sangat mirip: halaman dan slide digambar ulang
+        dengan aturan tata letak aplikasinya sendiri — huruf pengganti yang lebarnya sama,
+        spasi, poin, tabel, gambar, dan bentuk — semuanya di peramban Anda. PDF to Word juga
+        menyusun ulang tata letak halaman aslinya.
       </p>
       <p>
-        Pengecualiannya adalah PDF to PowerPoint — setiap halaman menjadi gambar slide,
-        sehingga tampilannya justru terjaga sempurna, tetapi teksnya tidak bisa diedit.
+        Excel ke PDF dan PDF ke Excel memindahkan <strong>isinya</strong>, bukan tampilannya.
+        PDF to PowerPoint menjadikan setiap halaman gambar slide, sehingga tampilannya terjaga
+        sempurna, tetapi teksnya tidak bisa diedit.
       </p>
 
       <h3>Mengapa berkas .doc, .ppt, dan .xls lama ditolak?</h3>

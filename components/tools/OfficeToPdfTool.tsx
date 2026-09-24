@@ -31,9 +31,9 @@ const SOURCES: Record<
     slug: 'powerpoint-to-pdf',
     runLabel: 'Ubah jadi PDF',
     expectation:
-      'Teks setiap slide diambil dan disusun menjadi satu halaman per slide, mengikuti rasio deck aslinya.',
+      'Setiap slide digambar seperti di PowerPoint: latar, tema, master dan layout, bentuk, garis panah, gambar, tabel, serta teks dengan pemenggalan baris, spasi, dan poin yang sama.',
     caveat:
-      'Yang berpindah adalah teks slide. Latar, gambar, bentuk, dan tema tidak ikut dirender.',
+      'Huruf yang tidak tersedia bebas dibuat ulang dengan pengganti pada lebar aslinya (mis. Gill Sans), jadi pemenggalan baris tetap sama. Animasi, video, grafik bawaan (chart), SmartArt, dan efek bayangan belum digambar.',
     legacy: '.ppt',
   },
   excel: {
